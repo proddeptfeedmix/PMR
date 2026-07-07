@@ -2,15 +2,18 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Extrusion Plant — Monthly Performance Report</title>
+<title>Feedmix Plant Ops</title>
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <style>
   :root{
     --bg:#1B1D21; --panel:#232629; --panel-2:#2A2E32; --panel-3:#1E2023;
     --line:#3A3F45; --line-soft:#2c2f33;
     --text:#E7E4DD; --text-dim:#9A9FA6; --text-dim2:#7C8187;
     --amber:#F0A202; --amber-dim:#7A5A14;
-    --good:#4FAE7C; --bad:#D9534F; --info:#5B9BD5;
+    --good:#4FAE7C; --bad:#D9534F; --info:#5B9BD5; --teal:#3FA6A6;
     --radius:3px;
   }
   *{box-sizing:border-box;}
@@ -20,113 +23,129 @@
   .mono{font-family:'JetBrains Mono',monospace;}
   a{color:var(--amber);}
 
-  header{display:flex;align-items:center;justify-content:space-between;padding:16px 26px;border-bottom:2px solid var(--amber);background:linear-gradient(180deg,#202226,#1B1D21);}
-  header .brand{display:flex;align-items:center;gap:14px;}
-  header .brand .mark{width:36px;height:36px;border:2px solid var(--amber);border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Oswald';font-weight:700;color:var(--amber);font-size:13px;}
-  header h1{font-size:18px;color:var(--text);}
-  header .stamp{text-align:right;}
-  header .stamp .date{color:var(--amber);font-size:12px;}
+  /* ---- Login ---- */
+  .login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 30% 20%,#26292d,#1B1D21);}
+  .login-card{background:var(--panel);border:1px solid var(--line);border-top:3px solid var(--amber);border-radius:var(--radius);padding:34px;width:340px;}
+  .login-card h1{font-size:20px;margin-bottom:4px;}
+  .login-card .field{width:100%;margin-bottom:14px;}
+  .login-card .field input{width:100%;}
+  .login-err{color:var(--bad);font-size:12px;font-family:'JetBrains Mono';margin-bottom:10px;min-height:14px;}
 
-  .layout{display:grid;grid-template-columns:280px 1fr;min-height:calc(100vh - 68px);}
-  aside{border-right:1px solid var(--line);background:var(--panel-3);padding:18px;}
-  aside h2{font-size:12px;color:var(--text-dim2);margin-bottom:12px;}
-  .plant-card{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--line);border-radius:var(--radius);padding:11px 13px;margin-bottom:9px;cursor:pointer;transition:.15s;}
+  header{display:flex;align-items:center;justify-content:space-between;padding:14px 26px;border-bottom:2px solid var(--amber);background:linear-gradient(180deg,#202226,#1B1D21);}
+  header .brand{display:flex;align-items:center;gap:14px;}
+  header .brand .mark{width:36px;height:36px;border:2px solid var(--amber);border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Oswald';font-weight:700;color:var(--amber);font-size:12px;}
+  header h1{font-size:17px;color:var(--text);}
+  header .userbox{display:flex;align-items:center;gap:12px;}
+  .role-badge{padding:3px 10px;border-radius:10px;font-size:10.5px;font-family:'JetBrains Mono';letter-spacing:1px;text-transform:uppercase;font-weight:700;}
+  .role-admin{background:rgba(240,162,2,.18);color:var(--amber);}
+  .role-plant{background:rgba(91,155,213,.18);color:var(--info);}
+
+  .layout{display:grid;grid-template-columns:250px 1fr;min-height:calc(100vh - 62px);}
+  aside{border-right:1px solid var(--line);background:var(--panel-3);padding:16px;}
+  aside h2{font-size:11px;color:var(--text-dim2);margin-bottom:10px;}
+  .plant-card{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px;cursor:pointer;}
   .plant-card:hover{background:var(--panel-2);}
   .plant-card.active{border-left-color:var(--amber);background:var(--panel-2);}
-  .plant-card .pname{font-family:'Oswald';font-size:14px;}
-  .plant-card .psub{font-size:10.5px;color:var(--text-dim2);margin-top:3px;font-family:'JetBrains Mono';}
-  .add-btn{width:100%;padding:9px;background:transparent;border:1px dashed var(--line);color:var(--text-dim2);border-radius:var(--radius);cursor:pointer;font-family:'JetBrains Mono';font-size:11.5px;letter-spacing:1px;text-transform:uppercase;margin-top:5px;}
+  .plant-card .pname{font-family:'Oswald';font-size:13.5px;}
+  .add-btn{width:100%;padding:8px;background:transparent;border:1px dashed var(--line);color:var(--text-dim2);border-radius:var(--radius);cursor:pointer;font-family:'JetBrains Mono';font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-top:5px;}
   .add-btn:hover{border-color:var(--amber);color:var(--amber);}
+  .admin-nav-btn{width:100%;padding:9px;background:var(--panel-2);border:1px solid var(--amber-dim);color:var(--amber);border-radius:var(--radius);cursor:pointer;font-family:'JetBrains Mono';font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:14px;}
+  .admin-nav-btn:hover{background:#31353a;}
+  .logout-btn{background:none;border:1px solid var(--line);color:var(--text-dim);padding:6px 12px;border-radius:var(--radius);cursor:pointer;font-family:'JetBrains Mono';font-size:11px;}
+  .logout-btn:hover{border-color:var(--bad);color:var(--bad);}
 
-  main{padding:22px 30px 60px;overflow-x:auto;}
+  main{padding:20px 28px 60px;overflow-x:auto;}
   .empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;height:60vh;color:var(--text-dim2);text-align:center;gap:8px;}
 
-  .workspace-head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:20px;flex-wrap:wrap;gap:12px;}
-  .workspace-head h1{font-size:23px;}
-  .sub-line{font-size:11.5px;color:var(--text-dim2);margin-top:4px;font-family:'JetBrains Mono';}
+  .workspace-head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:18px;flex-wrap:wrap;gap:10px;}
+  .workspace-head h1{font-size:21px;}
+  .sub-line{font-size:11px;color:var(--text-dim2);margin-top:4px;font-family:'JetBrains Mono';}
 
-  .tabs{display:flex;gap:2px;}
-  .tab-btn{background:var(--panel);border:1px solid var(--line);color:var(--text-dim2);padding:8px 15px;font-family:'JetBrains Mono';font-size:10.5px;letter-spacing:1.3px;text-transform:uppercase;cursor:pointer;}
+  .tabs{display:flex;gap:2px;flex-wrap:wrap;}
+  .tab-btn{background:var(--panel);border:1px solid var(--line);color:var(--text-dim2);padding:7px 13px;font-family:'JetBrains Mono';font-size:10px;letter-spacing:1.1px;text-transform:uppercase;cursor:pointer;}
   .tab-btn.active{background:var(--amber);color:#1B1D21;border-color:var(--amber);font-weight:700;}
 
-  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:18px;}
-  .panel-title{font-size:12px;letter-spacing:1.3px;color:var(--text-dim2);text-transform:uppercase;font-family:'JetBrains Mono';margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px;margin-bottom:16px;}
+  .panel-title{font-size:11.5px;letter-spacing:1.2px;color:var(--text-dim2);text-transform:uppercase;font-family:'JetBrains Mono';margin-bottom:12px;}
+  .group-title{font-size:10px;letter-spacing:1.2px;color:var(--amber);text-transform:uppercase;font-family:'JetBrains Mono';margin:14px 0 8px;border-bottom:1px solid var(--line-soft);padding-bottom:4px;}
 
-  .grid-row{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;}
-  .field{display:flex;flex-direction:column;gap:5px;}
-  .field label{font-size:9.5px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim2);font-family:'JetBrains Mono';}
-  .field input,.field select,.field textarea{background:#181A1D;border:1px solid var(--line);color:var(--text);padding:8px 9px;border-radius:var(--radius);font-family:'JetBrains Mono';font-size:12.5px;width:140px;}
-  .field textarea{width:260px;min-height:36px;font-family:'Inter';resize:vertical;}
-  .field.wide input, .field.wide select{width:200px;}
-  .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--amber);}
+  .field-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(105px,1fr));gap:10px;}
+  .field{display:flex;flex-direction:column;gap:4px;}
+  .field label{font-size:9px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-dim2);font-family:'JetBrains Mono';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .field input,.field select{background:#181A1D;border:1px solid var(--line);color:var(--text);padding:7px 8px;border-radius:var(--radius);font-family:'JetBrains Mono';font-size:12px;width:100%;}
+  .field input:focus,.field select:focus{outline:none;border-color:var(--amber);}
+  .grid-row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;}
+  .field.wide{grid-column:span 2;}
 
-  .btn{background:var(--amber);color:#1B1D21;border:none;padding:9px 18px;font-family:'Oswald';font-weight:600;letter-spacing:0.5px;text-transform:uppercase;border-radius:var(--radius);cursor:pointer;font-size:12.5px;white-space:nowrap;}
+  .btn{background:var(--amber);color:#1B1D21;border:none;padding:9px 18px;font-family:'Oswald';font-weight:600;letter-spacing:0.5px;text-transform:uppercase;border-radius:var(--radius);cursor:pointer;font-size:12px;white-space:nowrap;}
   .btn:hover{background:#ffb521;}
   .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--text-dim);}
   .btn.ghost:hover{border-color:var(--bad);color:var(--bad);}
   .btn.small{padding:6px 12px;font-size:10.5px;}
-  .btn.add-row{background:var(--panel-2);color:var(--amber);border:1px dashed var(--amber-dim);}
-  .btn.add-row:hover{background:#31353a;}
 
-  table{width:100%;border-collapse:collapse;font-family:'JetBrains Mono';font-size:12px;}
-  th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);color:var(--text-dim2);font-size:9.5px;letter-spacing:1px;text-transform:uppercase;}
-  td{padding:8px 10px;border-bottom:1px solid var(--line-soft);vertical-align:top;}
-  tr:hover td{background:#26292d;}
+  table{width:100%;border-collapse:collapse;font-family:'JetBrains Mono';font-size:11.5px;}
+  th{text-align:left;padding:7px 9px;border-bottom:1px solid var(--line);color:var(--text-dim2);font-size:9px;letter-spacing:0.8px;text-transform:uppercase;}
+  td{padding:7px 9px;border-bottom:1px solid var(--line-soft);vertical-align:top;}
+  tr.clickable{cursor:pointer;}
+  tr.clickable:hover td{background:#282c30;}
   td.num{text-align:right;}
   .del-btn{background:none;border:none;color:var(--text-dim2);cursor:pointer;font-size:13px;}
   .del-btn:hover{color:var(--bad);}
-  .mini-table input,.mini-table select{width:100%;min-width:70px;padding:5px 6px;font-size:11px;}
 
-  .badge{padding:2px 8px;border-radius:10px;font-size:10.5px;font-weight:700;white-space:nowrap;}
+  .badge{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;}
   .badge-good{background:rgba(79,174,124,.15);color:var(--good);}
+  .badge-teal{background:rgba(63,166,166,.18);color:var(--teal);}
   .badge-mid{background:rgba(240,162,2,.15);color:var(--amber);}
   .badge-bad{background:rgba(217,83,79,.15);color:var(--bad);}
   .badge-info{background:rgba(91,155,213,.15);color:var(--info);}
   .badge-dim{background:rgba(154,159,166,.15);color:var(--text-dim);}
 
   .sub-block{background:var(--panel-3);border:1px solid var(--line);border-radius:var(--radius);padding:12px;margin-top:10px;}
-  .sub-block-title{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text-dim2);font-family:'JetBrains Mono';margin-bottom:8px;}
-  .calc-note{font-size:11px;color:var(--text-dim2);font-family:'JetBrains Mono';margin-top:8px;}
+  .calc-note{font-size:10.5px;color:var(--text-dim2);font-family:'JetBrains Mono';margin-top:8px;}
 
-  .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
-  .stat-card{background:var(--panel-2);border:1px solid var(--line);border-radius:var(--radius);padding:14px;}
-  .stat-card .label{font-size:9.5px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text-dim2);font-family:'JetBrains Mono';}
-  .stat-card .value{font-family:'JetBrains Mono';font-size:24px;font-weight:700;margin-top:6px;}
+  .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
+  .stat-card{background:var(--panel-2);border:1px solid var(--line);border-radius:var(--radius);padding:13px;}
+  .stat-card .label{font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text-dim2);font-family:'JetBrains Mono';}
+  .stat-card .value{font-family:'JetBrains Mono';font-size:22px;font-weight:700;margin-top:5px;}
   .stat-card .value.accent{color:var(--amber);}
-  .stat-card .sub{font-size:10.5px;color:var(--text-dim2);margin-top:3px;}
+  .stat-card .sub{font-size:10px;color:var(--text-dim2);margin-top:3px;}
 
-  .bars{display:flex;align-items:flex-end;gap:3px;height:150px;border-bottom:1px solid var(--line);}
-  .bar{flex:1;background:var(--amber-dim);border-radius:2px 2px 0 0;min-width:5px;}
-  .bar.hit{background:var(--amber);}
-  .bar-labels{display:flex;gap:3px;margin-top:5px;}
-  .bar-labels span{flex:1;text-align:center;font-size:8.5px;color:var(--text-dim2);font-family:'JetBrains Mono';}
-  .hbar-row{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
+  .gauge-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
+  .gauge-card{background:var(--panel-2);border:1px solid var(--line);border-radius:var(--radius);padding:12px;display:flex;flex-direction:column;align-items:center;}
+  .gauge-title{font-size:9px;letter-spacing:0.8px;text-transform:uppercase;color:var(--text-dim2);font-family:'JetBrains Mono';margin-bottom:6px;text-align:center;}
+  .gauge-val{font-family:'JetBrains Mono';font-size:14px;font-weight:700;margin-top:-4px;}
+
+  .hbar-row{display:flex;align-items:center;gap:10px;margin-bottom:7px;}
   .hbar-label{width:120px;font-size:11px;font-family:'JetBrains Mono';color:var(--text-dim);flex-shrink:0;}
-  .hbar-track{flex:1;background:var(--panel-3);border-radius:2px;height:16px;position:relative;overflow:hidden;}
+  .hbar-track{flex:1;background:var(--panel-3);border-radius:2px;height:14px;overflow:hidden;}
   .hbar-fill{height:100%;background:var(--amber);border-radius:2px;}
-  .hbar-val{width:70px;text-align:right;font-size:11px;font-family:'JetBrains Mono';color:var(--text);}
+  .hbar-val{width:80px;text-align:right;font-size:11px;font-family:'JetBrains Mono';color:var(--text);}
 
-  .gauge-row{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;}
-  .gauge-card{background:var(--panel-2);border:1px solid var(--line);border-radius:var(--radius);padding:14px;display:flex;flex-direction:column;align-items:center;}
-  .gauge-title{font-size:9.5px;letter-spacing:1px;text-transform:uppercase;color:var(--text-dim2);font-family:'JetBrains Mono';margin-bottom:8px;text-align:center;}
-  .gauge-val{font-family:'JetBrains Mono';font-size:15px;font-weight:700;margin-top:-6px;}
+  .month-picker{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;}
+  .month-picker input,.month-picker select{background:#181A1D;border:1px solid var(--line);color:var(--text);padding:7px 10px;border-radius:var(--radius);font-family:'JetBrains Mono';font-size:12px;}
 
-  .month-picker{display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap;}
-  .month-picker input,.month-picker select{background:#181A1D;border:1px solid var(--line);color:var(--text);padding:7px 10px;border-radius:var(--radius);font-family:'JetBrains Mono';font-size:12.5px;}
+  .section-num{color:var(--amber);font-family:'JetBrains Mono';margin-right:6px;}
+  .no-data{color:var(--text-dim2);text-align:center;padding:24px;font-family:'JetBrains Mono';font-size:12px;}
 
-  .section-num{color:var(--amber);font-family:'JetBrains Mono';margin-right:8px;}
-  .no-data{color:var(--text-dim2);text-align:center;padding:30px;font-family:'JetBrains Mono';font-size:12.5px;}
+  .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:20px;width:460px;max-height:86vh;overflow-y:auto;}
+  .modal.wide{width:720px;}
+  .modal h3{margin-bottom:12px;font-size:14px;}
+  .modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:10px;}
+  .chip{display:flex;justify-content:space-between;align-items:center;background:var(--panel-3);border:1px solid var(--line);border-radius:var(--radius);padding:7px 10px;margin-bottom:6px;font-size:11.5px;font-family:'JetBrains Mono';}
 
-  .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;}
-  .modal{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:22px;width:420px;max-height:85vh;overflow-y:auto;}
-  .modal h3{margin-bottom:14px;font-size:15px;}
-  .modal .field{margin-bottom:12px;width:100%;}
-  .modal .field input,.modal .field select{width:100%;}
-  .modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:8px;}
-  .variant-chip{display:flex;justify-content:space-between;align-items:center;background:var(--panel-3);border:1px solid var(--line);border-radius:var(--radius);padding:8px 10px;margin-bottom:6px;font-size:12px;font-family:'JetBrains Mono';}
+  .matrix-table{width:100%;border-collapse:collapse;font-size:11px;font-family:'JetBrains Mono';}
+  .matrix-table th,.matrix-table td{border:1px solid var(--line);padding:5px;text-align:center;}
+  .matrix-table th{background:var(--panel-3);color:var(--text-dim2);font-size:9.5px;}
+  .matrix-table input{width:64px;background:#181A1D;border:1px solid var(--line);color:var(--text);padding:4px;border-radius:2px;font-family:'JetBrains Mono';font-size:11px;text-align:center;}
+
+  .detail-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;font-size:11.5px;}
+  .detail-item{background:var(--panel-3);border:1px solid var(--line-soft);border-radius:var(--radius);padding:7px 9px;}
+  .detail-item .dl{font-size:8.5px;color:var(--text-dim2);text-transform:uppercase;letter-spacing:0.6px;font-family:'JetBrains Mono';}
+  .detail-item .dv{font-family:'JetBrains Mono';font-size:13px;margin-top:2px;}
 
   @media print{
-    aside,header .stamp,.tabs,.btn,.del-btn,.month-picker .btn{display:none !important;}
+    aside,header .userbox,.tabs,.btn,.del-btn,.month-picker .btn{display:none !important;}
     body{background:white;color:black;}
     .panel,.stat-card,.gauge-card{border-color:#ccc !important;background:white !important;}
   }
@@ -138,73 +157,178 @@
 </head>
 <body>
 
-<header>
-  <div class="brand">
-    <div class="mark">EX</div>
-    <div>
-      <div class="eyebrow">Extrusion Performance Monitoring</div>
-      <h1>Monthly Production Report</h1>
-    </div>
+<div id="loginScreen" class="login-wrap">
+  <div class="login-card">
+    <div class="eyebrow">Feedmix Specialist Inc.</div>
+    <h1>Plant Ops Login</h1>
+    <div style="height:14px;"></div>
+    <div class="field"><label style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim2);font-family:'JetBrains Mono';">Email</label><input id="loginEmail" type="email" placeholder="you@feedmix.local"></div>
+    <div class="field"><label style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim2);font-family:'JetBrains Mono';">Password</label><input id="loginPassword" type="password" placeholder="••••••••"></div>
+    <div class="login-err" id="loginErr"></div>
+    <button class="btn" style="width:100%;" onclick="doLogin()">Log In</button>
   </div>
-  <div class="stamp">
-    <div class="eyebrow">Shift Record</div>
-    <div class="date mono" id="todayStamp"></div>
-  </div>
-</header>
+</div>
 
-<div class="layout">
-  <aside>
-    <h2 class="eyebrow">Facilities</h2>
-    <div id="plantList"></div>
-    <button class="add-btn" onclick="openAddPlant()">+ Add Facility</button>
-    <button class="add-btn" onclick="loadDefaultStructure()" style="margin-top:8px;">⚡ Load Plant 1–4 Structure</button>
-  </aside>
-  <main id="mainArea"></main>
+<div id="appRoot" style="display:none;">
+  <header>
+    <div class="brand">
+      <div class="mark">FS</div>
+      <div>
+        <div class="eyebrow">Production Monitoring</div>
+        <h1>Plant Ops</h1>
+      </div>
+    </div>
+    <div class="userbox">
+      <span class="role-badge" id="roleBadge"></span>
+      <span class="mono" id="userEmailLabel" style="font-size:12px;color:var(--text-dim);"></span>
+      <button class="logout-btn" onclick="doLogout()">Log Out</button>
+    </div>
+  </header>
+  <div class="layout">
+    <aside id="sidebar"></aside>
+    <main id="mainArea"></main>
+  </div>
 </div>
 
 <div id="modalRoot"></div>
 
 <script>
-let plants = [];       // {id, name, shiftHours, variants:[{id,name,idealRate}], lines:[{id,name,type}]}
-let shifts = {};       // plantId -> [{id,date,shiftLabel,lineId,variantId,rawMaterial,goodOutput,rejectedQty,plannedHours,downtimeHours,hourly:[],quality:[]}]
-let dies = {};         // plantId -> [{id,dieId,lineId,installDate,status,removalDate,runningHours,throughputTons,reason,notes}]
+/* =================== FIREBASE CONFIG =====================
+   Replace with YOUR Firebase project config (Project Settings
+   → General → Your apps → SDK setup and configuration).
+   ============================================================ */
+const firebaseConfig = {
+  apiKey: "AIzaSyB_tgkmCtOKSZxxrH2zpMJROcg3ICvWMm8",
+  authDomain: "plant-operation.firebaseapp.com",
+  projectId: "plant-operation",
+  storageBucket: "plant-operation.firebasestorage.app",
+  messagingSenderId: "63714104008",
+  appId: "1:63714104008:web:8bdbcc4938b528e0fdcbfd"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
 const LINE_TYPES = ['Extruder','Pellet Mill','Crumbler'];
+const DRYER_ZONES = 12;
+
+let currentUser=null, currentRole=null, currentPlantId=null;
+let plants = [];             // [{id,name,shiftHours,lines:[],variants:[],ict:{}}]
+let shiftsCache = [];        // active plant's shifts
+let diesCache = [];
+let batchesCache = [];
 let activePlantId = null;
 let activeTab = 'shift';
-let loaded = false;
-let draftHourly = [];
+let adminView = null;        // null | 'facilities' | 'users'
+let plantsUnsub=null, shiftsUnsub=null, diesUnsub=null, batchesUnsub=null;
 let draftQuality = [];
+let userAccounts = [];       // roles collection cache (admin only)
 
-document.getElementById('todayStamp').textContent = new Date().toLocaleDateString(undefined,{weekday:'short',year:'numeric',month:'short',day:'numeric'}).toUpperCase();
-
-async function loadAll(){
-  try{ const r = await window.storage.get('plants'); plants = r ? JSON.parse(r.value) : []; }catch(e){ plants=[]; }
-  shifts = {}; dies = {};
-  for(const p of plants){
-    try{ const r = await window.storage.get('shifts:'+p.id); shifts[p.id] = r ? JSON.parse(r.value) : []; }catch(e){ shifts[p.id]=[]; }
-    try{ const r = await window.storage.get('dies:'+p.id); dies[p.id] = r ? JSON.parse(r.value) : []; }catch(e){ dies[p.id]=[]; }
-  }
-  if(plants.length && !activePlantId) activePlantId = plants[0].id;
-  loaded = true;
-  render();
+/* ---------------- AUTH ---------------- */
+function doLogin(){
+  const email = document.getElementById('loginEmail').value.trim();
+  const pw = document.getElementById('loginPassword').value;
+  document.getElementById('loginErr').textContent='';
+  auth.signInWithEmailAndPassword(email, pw).catch(err=>{
+    document.getElementById('loginErr').textContent = err.message;
+  });
 }
-async function savePlants(){ try{ await window.storage.set('plants', JSON.stringify(plants)); }catch(e){console.error(e);} }
-async function saveShifts(pid){ try{ await window.storage.set('shifts:'+pid, JSON.stringify(shifts[pid]||[])); }catch(e){console.error(e);} }
-async function saveDies(pid){ try{ await window.storage.set('dies:'+pid, JSON.stringify(dies[pid]||[])); }catch(e){console.error(e);} }
+function doLogout(){ auth.signOut(); }
+
+auth.onAuthStateChanged(async user=>{
+  if(user){
+    currentUser = user;
+    let roleDoc;
+    try{
+      roleDoc = await db.collection('roles').doc(user.uid).get();
+    }catch(err){
+      document.getElementById('loginErr').textContent = 'Could not read your role (Firestore says: '+err.message+'). Check that the security rules were published, and that Firestore was created.';
+      auth.signOut();
+      return;
+    }
+    if(!roleDoc.exists){
+      document.getElementById('loginErr').textContent = 'No role assigned to this account yet (UID: '+user.uid+'). Check that a document with this exact ID exists in the "roles" collection.';
+      auth.signOut();
+      return;
+    }
+    const data = roleDoc.data();
+    currentRole = data.role;
+    currentPlantId = data.plantId || null;
+    document.getElementById('loginScreen').style.display='none';
+    document.getElementById('appRoot').style.display='block';
+    document.getElementById('roleBadge').textContent = currentRole==='admin' ? 'Admin' : 'Plant User';
+    document.getElementById('roleBadge').className = 'role-badge ' + (currentRole==='admin' ? 'role-admin' : 'role-plant');
+    document.getElementById('userEmailLabel').textContent = user.email;
+    subscribePlants();
+  } else {
+    document.getElementById('loginScreen').style.display='flex';
+    document.getElementById('appRoot').style.display='none';
+    if(plantsUnsub) plantsUnsub();
+    if(shiftsUnsub) shiftsUnsub();
+    if(diesUnsub) diesUnsub();
+    if(batchesUnsub) batchesUnsub();
+    plants=[]; activePlantId=null; currentRole=null; currentPlantId=null;
+  }
+});
+
+/* ---------------- FIRESTORE SUBSCRIPTIONS ---------------- */
+function subscribePlants(){
+  if(plantsUnsub) plantsUnsub();
+  if(currentRole==='admin'){
+    plantsUnsub = db.collection('plants').onSnapshot(snap=>{
+      plants = snap.docs.map(d=>normalizePlant(d.id,d.data()));
+      if(!activePlantId && plants.length) activePlantId = plants[0].id;
+      if(activePlantId) subscribePlantData(activePlantId);
+      render();
+    });
+    db.collection('roles').onSnapshot(snap=>{
+      userAccounts = snap.docs.map(d=>({uid:d.id,...d.data()}));
+      if(adminView==='users') render();
+    });
+  } else {
+    plantsUnsub = db.collection('plants').doc(currentPlantId).onSnapshot(doc=>{
+      plants = doc.exists ? [normalizePlant(doc.id, doc.data())] : [];
+      activePlantId = currentPlantId;
+      subscribePlantData(activePlantId);
+      render();
+    });
+  }
+}
+function normalizePlant(id, data){
+  return {id, name:data.name||'Unnamed', shiftHours:data.shiftHours||8, lines:data.lines||[], variants:data.variants||[], ict:data.ict||{}};
+}
+function subscribePlantData(plantId){
+  if(shiftsUnsub) shiftsUnsub();
+  if(diesUnsub) diesUnsub();
+  if(batchesUnsub) batchesUnsub();
+  shiftsUnsub = db.collection('plants').doc(plantId).collection('shifts').onSnapshot(snap=>{
+    shiftsCache = snap.docs.map(d=>({id:d.id,...d.data()}));
+    render();
+  });
+  diesUnsub = db.collection('plants').doc(plantId).collection('dies').onSnapshot(snap=>{
+    diesCache = snap.docs.map(d=>({id:d.id,...d.data()}));
+    render();
+  });
+  batchesUnsub = db.collection('plants').doc(plantId).collection('batches').onSnapshot(snap=>{
+    batchesCache = snap.docs.map(d=>({id:d.id,...d.data()}));
+    render();
+  });
+}
 
 function uid(pre){ return (pre||'id')+'_'+Math.random().toString(36).slice(2,9); }
 function esc(s){ const d=document.createElement('div'); d.textContent=s==null?'':s; return d.innerHTML; }
 function closeModal(){ document.getElementById('modalRoot').innerHTML=''; }
 function fmt(n,dec){ if(n==null||isNaN(n)) return '0'; return n.toLocaleString(undefined,{minimumFractionDigits:dec||0,maximumFractionDigits:dec||0}); }
+function currentPlant(){ return plants.find(p=>p.id===activePlantId); }
 
-/* ---------------- PLANT MANAGEMENT ---------------- */
+/* ---------------- ADMIN: PLANT / LINE / VARIANT MGMT ---------------- */
 function openAddPlant(){
   document.getElementById('modalRoot').innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
       <div class="modal">
         <h3>New Facility</h3>
-        <div class="field"><label>Facility Name</label><input id="np_name" placeholder="e.g. Extruder Line 2"></div>
-        <div class="field"><label>Standard Shift Length (hours)</label><input id="np_shift" type="number" value="8"></div>
+        <div class="field" style="margin-bottom:12px;"><label>Facility Name</label><input id="np_name" placeholder="e.g. Plant 4"></div>
+        <div class="field" style="margin-bottom:12px;"><label>Standard Shift Length (hours)</label><input id="np_shift" type="number" value="8"></div>
         <div class="modal-actions">
           <button class="btn ghost" onclick="closeModal()">Cancel</button>
           <button class="btn" onclick="submitAddPlant()">Add Facility</button>
@@ -214,16 +338,19 @@ function openAddPlant(){
 }
 async function submitAddPlant(){
   const name = document.getElementById('np_name').value.trim();
-  const shiftHours = parseFloat(document.getElementById('np_shift').value) || 8;
+  const shiftHours = parseFloat(document.getElementById('np_shift').value)||8;
   if(!name) return;
-  const id = uid('plant');
-  plants.push({id,name,shiftHours,variants:[],lines:[]});
-  shifts[id]=[]; dies[id]=[];
-  await savePlants(); await saveShifts(id); await saveDies(id);
-  activePlantId = id; closeModal(); render();
+  await db.collection('plants').add({name, shiftHours, lines:[], variants:[], ict:{}});
+  closeModal();
+}
+async function deletePlant(id, evt){
+  evt.stopPropagation();
+  if(!confirm('Remove this facility and all its logged data? This cannot be undone.')) return;
+  await db.collection('plants').doc(id).delete();
+  if(activePlantId===id) activePlantId=null;
 }
 async function loadDefaultStructure(){
-  if(plants.length && !confirm('This adds Plant 1–4 with their lines to your current facility list. Continue?')) return;
+  if(!confirm('This adds Plant 1–4 with their lines to your facility list. Continue?')) return;
   const spec = [
     {name:'Plant 1', lines:[{name:'Line 1',type:'Extruder'},{name:'Line 2',type:'Extruder'},{name:'Line 3',type:'Extruder'}]},
     {name:'Plant 2', lines:[{name:'Line 1',type:'Extruder'},{name:'Line 2',type:'Extruder'},{name:'Line 3',type:'Extruder'}]},
@@ -231,93 +358,29 @@ async function loadDefaultStructure(){
     {name:'Plant 4', lines:[{name:'Line 1',type:'Crumbler'},{name:'Line 2',type:'Pellet Mill'},{name:'Line 3',type:'Extruder'},{name:'Line 4',type:'Extruder'}]},
   ];
   for(const p of spec){
-    const id = uid('plant');
-    plants.push({id, name:p.name, shiftHours:8, variants:[], lines:p.lines.map(l=>({id:uid('line'), name:l.name, type:l.type}))});
-    shifts[id]=[]; dies[id]=[];
-    await saveShifts(id); await saveDies(id);
+    await db.collection('plants').add({
+      name:p.name, shiftHours:8, ict:{},
+      lines: p.lines.map(l=>({id:uid('line'), name:l.name, type:l.type})),
+      variants: []
+    });
   }
-  await savePlants();
-  if(!activePlantId && plants.length) activePlantId = plants[0].id;
-  render();
 }
-async function deletePlant(id, evt){
-  evt.stopPropagation();
-  if(!confirm('Remove this facility and all its logged data?')) return;
-  plants = plants.filter(p=>p.id!==id);
-  delete shifts[id]; delete dies[id];
-  await savePlants();
-  try{ await window.storage.delete('shifts:'+id); }catch(e){}
-  try{ await window.storage.delete('dies:'+id); }catch(e){}
-  if(activePlantId===id) activePlantId = plants.length ? plants[0].id : null;
-  render();
-}
-function selectPlant(id){ activePlantId=id; activeTab='shift'; render(); }
-function setTab(t){ activeTab=t; render(); }
+function selectPlant(id){ activePlantId=id; activeTab='shift'; adminView=null; subscribePlantData(id); render(); }
+function setTab(t){ activeTab=t; adminView=null; render(); }
+function openAdminView(v){ adminView=v; render(); }
 
-/* ---------------- VARIANT MANAGEMENT ---------------- */
-function openVariants(plantId){
-  const plant = plants.find(p=>p.id===plantId);
-  renderVariantModal(plant);
-}
-function renderVariantModal(plant){
-  document.getElementById('modalRoot').innerHTML = `
-    <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
-      <div class="modal">
-        <h3>Manage Variants — ${esc(plant.name)}</h3>
-        <div id="variantChips">${(plant.variants||[]).map(v=>`
-          <div class="variant-chip">
-            <span>${esc(v.name)} <span style="color:var(--text-dim2)">— ideal ${v.idealRate} t/hr</span></span>
-            <button class="del-btn" onclick="removeVariant('${plant.id}','${v.id}')">✕</button>
-          </div>`).join('') || '<div style="color:var(--text-dim2);font-size:12px;">No variants yet.</div>'}
-        </div>
-        <div class="field" style="width:100%;margin-top:14px;"><label>Variant Name</label><input id="v_name" placeholder="e.g. 3mm Fish Feed"></div>
-        <div class="field" style="width:100%;"><label>Ideal Feedrate (ton/hr)</label><input id="v_rate" type="number" step="0.01" placeholder="e.g. 2.5"></div>
-        <div class="modal-actions">
-          <button class="btn ghost" onclick="closeModal()">Done</button>
-          <button class="btn" onclick="addVariant('${plant.id}')">Add Variant</button>
-        </div>
-      </div>
-    </div>`;
-}
-async function addVariant(plantId){
-  const name = document.getElementById('v_name').value.trim();
-  const idealRate = parseFloat(document.getElementById('v_rate').value) || 0;
-  if(!name) return;
-  const plant = plants.find(p=>p.id===plantId);
-  plant.variants = plant.variants || [];
-  plant.variants.push({id:uid('var'), name, idealRate});
-  await savePlants();
-  renderVariantModal(plant);
-  render();
-}
-async function removeVariant(plantId, variantId){
-  const plant = plants.find(p=>p.id===plantId);
-  plant.variants = plant.variants.filter(v=>v.id!==variantId);
-  await savePlants();
-  renderVariantModal(plant);
-  render();
-}
-
-/* ---------------- LINE MANAGEMENT ---------------- */
-function openLines(plantId){
-  const plant = plants.find(p=>p.id===plantId);
-  renderLineModal(plant);
-}
+function openLines(plantId){ renderLineModal(plants.find(p=>p.id===plantId)); }
 function renderLineModal(plant){
   document.getElementById('modalRoot').innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
       <div class="modal">
         <h3>Manage Lines — ${esc(plant.name)}</h3>
-        <div id="lineChips">${(plant.lines||[]).map(l=>`
-          <div class="variant-chip">
-            <span>${esc(l.name)} <span style="color:var(--text-dim2)">— ${esc(l.type)}</span></span>
-            <button class="del-btn" onclick="removeLine('${plant.id}','${l.id}')">✕</button>
-          </div>`).join('') || '<div style="color:var(--text-dim2);font-size:12px;">No lines yet.</div>'}
+        <div>${(plant.lines||[]).map(l=>`
+          <div class="chip"><span>${esc(l.name)} <span style="color:var(--text-dim2)">— ${esc(l.type)}</span></span>
+          <button class="del-btn" onclick="removeLine('${plant.id}','${l.id}')">✕</button></div>`).join('') || '<div style="color:var(--text-dim2);font-size:12px;">No lines yet.</div>'}
         </div>
-        <div class="field" style="width:100%;margin-top:14px;"><label>Line Name</label><input id="l_name" placeholder="e.g. Line 1"></div>
-        <div class="field" style="width:100%;"><label>Line Type</label>
-          <select id="l_type">${LINE_TYPES.map(t=>`<option>${t}</option>`).join('')}</select>
-        </div>
+        <div class="field" style="margin-top:14px;margin-bottom:12px;"><label>Line Name</label><input id="l_name" placeholder="e.g. Line 1"></div>
+        <div class="field" style="margin-bottom:12px;"><label>Line Type</label><select id="l_type">${LINE_TYPES.map(t=>`<option>${t}</option>`).join('')}</select></div>
         <div class="modal-actions">
           <button class="btn ghost" onclick="closeModal()">Done</button>
           <button class="btn" onclick="addLine('${plant.id}')">Add Line</button>
@@ -330,75 +393,249 @@ async function addLine(plantId){
   const type = document.getElementById('l_type').value;
   if(!name) return;
   const plant = plants.find(p=>p.id===plantId);
-  plant.lines = plant.lines || [];
-  plant.lines.push({id:uid('line'), name, type});
-  await savePlants();
-  renderLineModal(plant);
-  render();
+  const lines = [...(plant.lines||[]), {id:uid('line'),name,type}];
+  await db.collection('plants').doc(plantId).update({lines});
+  setTimeout(()=>renderLineModal(plants.find(p=>p.id===plantId)),300);
 }
 async function removeLine(plantId, lineId){
   const plant = plants.find(p=>p.id===plantId);
-  plant.lines = plant.lines.filter(l=>l.id!==lineId);
-  await savePlants();
-  renderLineModal(plant);
-  render();
+  const lines = (plant.lines||[]).filter(l=>l.id!==lineId);
+  await db.collection('plants').doc(plantId).update({lines});
+  setTimeout(()=>renderLineModal(plants.find(p=>p.id===plantId)),300);
 }
 function lineName(plant, id){ const l=(plant.lines||[]).find(l=>l.id===id); return l?l.name:'Unassigned'; }
-function lineFull(plant, id){ const l=(plant.lines||[]).find(l=>l.id===id); return l?`${l.name} (${l.type})`:'Unassigned'; }
+function lineObj(plant, id){ return (plant.lines||[]).find(l=>l.id===id); }
 
-/* ---------------- METRICS ---------------- */
-function shiftMetrics(shift, plant){
-  const variant = (plant.variants||[]).find(v=>v.id===shift.variantId);
-  const totalOutput = (shift.goodOutput||0) + (shift.rejectedQty||0); // kg
-  const yieldPct = shift.rawMaterial>0 ? (totalOutput/shift.rawMaterial*100) : 0;
-  const qualityRate = totalOutput>0 ? (shift.goodOutput/totalOutput*100) : 0;
-  const runHours = Math.max(0,(shift.plannedHours||0)-(shift.downtimeHours||0));
-  const availability = shift.plannedHours>0 ? (runHours/shift.plannedHours*100) : 0;
+function openVariants(plantId){ renderVariantModal(plants.find(p=>p.id===plantId)); }
+function renderVariantModal(plant){
+  document.getElementById('modalRoot').innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
+      <div class="modal">
+        <h3>Manage Variants — ${esc(plant.name)}</h3>
+        <div>${(plant.variants||[]).map(v=>`
+          <div class="chip"><span>${esc(v.name)} <span style="color:var(--text-dim2)">— ${v.bagWeight||0} kg/bag</span></span>
+          <button class="del-btn" onclick="removeVariant('${plant.id}','${v.id}')">✕</button></div>`).join('') || '<div style="color:var(--text-dim2);font-size:12px;">No variants yet.</div>'}
+        </div>
+        <div class="field" style="margin-top:14px;margin-bottom:12px;"><label>Variant Name</label><input id="v_name" placeholder="e.g. Fish Starter Floating"></div>
+        <div class="field" style="margin-bottom:12px;"><label>Finished Product Weight per Bag (kg)</label><input id="v_bag" type="number" step="0.01" placeholder="e.g. 25"></div>
+        <div class="modal-actions">
+          <button class="btn ghost" onclick="closeModal()">Done</button>
+          <button class="btn" onclick="addVariant('${plant.id}')">Add Variant</button>
+        </div>
+      </div>
+    </div>`;
+}
+async function addVariant(plantId){
+  const name = document.getElementById('v_name').value.trim();
+  const bagWeight = parseFloat(document.getElementById('v_bag').value)||0;
+  if(!name) return;
+  const plant = plants.find(p=>p.id===plantId);
+  const variants = [...(plant.variants||[]), {id:uid('var'),name,bagWeight}];
+  await db.collection('plants').doc(plantId).update({variants});
+  setTimeout(()=>renderVariantModal(plants.find(p=>p.id===plantId)),300);
+}
+async function removeVariant(plantId, variantId){
+  const plant = plants.find(p=>p.id===plantId);
+  const variants = (plant.variants||[]).filter(v=>v.id!==variantId);
+  await db.collection('plants').doc(plantId).update({variants});
+  setTimeout(()=>renderVariantModal(plants.find(p=>p.id===plantId)),300);
+}
+function variantName(plant, id){ const v=(plant.variants||[]).find(v=>v.id===id); return v?v.name:'Unassigned'; }
+function variantObj(plant, id){ return (plant.variants||[]).find(v=>v.id===id); }
 
-  let totalKwh=0, totalTon=0;
-  (shift.hourly||[]).forEach(r=>{
-    const power = Math.sqrt(3) * (r.voltage||0) * (r.current||0) * (r.pf||0.85) / 1000; // kW
-    totalKwh += power; // 1 hour reading = kWh
-    totalTon += (r.feedrate||0); // ton for that hour
-  });
-  const sme = totalTon>0 ? (totalKwh/totalTon) : 0; // kWh/ton
-  const avgFeedrate = (shift.hourly||[]).length ? (totalTon/shift.hourly.length) : (runHours>0 ? (totalOutput/1000)/runHours : 0);
-  const performance = (variant && variant.idealRate>0) ? (avgFeedrate/variant.idealRate*100) : 0;
-  const oee = (availability/100)*(performance/100)*(qualityRate/100)*100;
-
-  return {variant, totalOutput, yieldPct, qualityRate, runHours, availability, sme, avgFeedrate, performance, oee, totalKwh, totalTon};
+/* Ideal Cycle Time matrix (Line × Variant), unit: seconds/kg */
+function openIct(plantId){ renderIctModal(plants.find(p=>p.id===plantId)); }
+function renderIctModal(plant){
+  const lines = plant.lines||[], variants = plant.variants||[];
+  let table;
+  if(!lines.length || !variants.length){
+    table = `<div class="no-data">Add at least one line and one variant first.</div>`;
+  } else {
+    table = `<table class="matrix-table"><thead><tr><th>Line \\ Variant</th>${variants.map(v=>`<th>${esc(v.name)}</th>`).join('')}</tr></thead><tbody>
+      ${lines.map(l=>`<tr><th>${esc(l.name)}</th>${variants.map(v=>{
+        const key = l.id+'_'+v.id;
+        const val = (plant.ict||{})[key] || '';
+        return `<td><input type="number" step="0.001" value="${val}" onchange="updateIct('${plant.id}','${key}',this.value)"></td>`;
+      }).join('')}</tr>`).join('')}
+    </tbody></table>`;
+  }
+  document.getElementById('modalRoot').innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
+      <div class="modal wide">
+        <h3>Ideal Cycle Time (seconds / kg) — ${esc(plant.name)}</h3>
+        <div class="calc-note" style="margin-bottom:10px;">One value per Line + Variant combination. Used in the Performance formula.</div>
+        ${table}
+        <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Done</button></div>
+      </div>
+    </div>`;
+}
+async function updateIct(plantId, key, val){
+  const plant = plants.find(p=>p.id===plantId);
+  const ict = {...(plant.ict||{})};
+  ict[key] = parseFloat(val)||0;
+  await db.collection('plants').doc(plantId).update({ict});
 }
 
-function monthPrefix(){ return new Date().toISOString().slice(0,7); }
+/* ---------------- ADMIN: USER ACCOUNTS ---------------- */
+function renderUsersPanel(){
+  return `
+    <div class="panel">
+      <div class="panel-title">Create Login</div>
+      <div class="grid-row">
+        <div class="field"><label>Email</label><input id="u_email" placeholder="plant1@feedmix.local"></div>
+        <div class="field"><label>Password</label><input id="u_password" type="password" placeholder="min 6 characters"></div>
+        <div class="field"><label>Role</label>
+          <select id="u_role" onchange="document.getElementById('u_plantWrap').style.display=this.value==='plant'?'flex':'none'">
+            <option value="plant">Plant User</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <div class="field" id="u_plantWrap"><label>Assigned Plant</label>
+          <select id="u_plant">${plants.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select>
+        </div>
+        <button class="btn" onclick="createUserAccount()">Create Login</button>
+      </div>
+      <div class="calc-note" id="createUserMsg"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Existing Logins</div>
+      <table>
+        <thead><tr><th>Email</th><th>Role</th><th>Plant</th><th></th></tr></thead>
+        <tbody>
+          ${userAccounts.length ? userAccounts.map(u=>`<tr>
+            <td>${esc(u.email||u.uid)}</td>
+            <td>${u.role==='admin'?'<span class="badge badge-mid">Admin</span>':'<span class="badge badge-info">Plant User</span>'}</td>
+            <td>${u.plantId ? esc((plants.find(p=>p.id===u.plantId)||{}).name||u.plantId) : '—'}</td>
+            <td><button class="del-btn" onclick="removeUserRole('${u.uid}')">✕</button></td>
+          </tr>`).join('') : `<tr><td colspan="4" class="no-data">No logins created yet (besides your own).</td></tr>`}
+        </tbody>
+      </table>
+      <div class="calc-note">Removing a login here only revokes its app access (deletes its role record) — it does not delete the Firebase Authentication account. Do that in the Firebase console if needed.</div>
+    </div>`;
+}
+async function createUserAccount(){
+  const email = document.getElementById('u_email').value.trim();
+  const password = document.getElementById('u_password').value;
+  const role = document.getElementById('u_role').value;
+  const plantId = role==='plant' ? document.getElementById('u_plant').value : null;
+  const msg = document.getElementById('createUserMsg');
+  if(!email || password.length<6){ msg.textContent='Enter an email and a password of at least 6 characters.'; msg.style.color='var(--bad)'; return; }
+  msg.style.color='var(--text-dim2)'; msg.textContent='Creating…';
+  try{
+    const secondaryApp = firebase.initializeApp(firebaseConfig, 'Secondary_'+Date.now());
+    const cred = await secondaryApp.auth().createUserWithEmailAndPassword(email, password);
+    await db.collection('roles').doc(cred.user.uid).set({email, role, plantId});
+    await secondaryApp.auth().signOut();
+    await secondaryApp.delete();
+    msg.style.color='var(--good)'; msg.textContent='Login created for '+email;
+    document.getElementById('u_email').value=''; document.getElementById('u_password').value='';
+  }catch(e){
+    msg.style.color='var(--bad)'; msg.textContent=e.message;
+  }
+}
+async function removeUserRole(uid){
+  if(!confirm('Revoke app access for this login?')) return;
+  await db.collection('roles').doc(uid).delete();
+}
 
-/* ---------------- RENDER: SHELL ---------------- */
+/* ---------------- METRICS ---------------- */
+function oeeClass(oee){
+  if(oee>=85) return {label:'World Class', cls:'badge-good'};
+  if(oee>=70) return {label:'Good', cls:'badge-teal'};
+  if(oee>=60) return {label:'Average', cls:'badge-mid'};
+  return {label:'Bad', cls:'badge-bad'};
+}
+function shiftMetrics(s, plant){
+  const variant = variantObj(plant, s.variantId);
+  const bagWeight = variant ? (variant.bagWeight||0) : 0;
+  const goodOutputKg = (s.actualOutputBags||0) * bagWeight;
+  const totalOutputKg = goodOutputKg + (s.rejectedQty||0);
+  const qualityRate = totalOutputKg>0 ? (goodOutputKg/totalOutputKg*100) : 0;
+  const runHours = Math.max(0,(s.plannedHours||0)-(s.downtimeHours||0));
+  const availability = s.plannedHours>0 ? (runHours/s.plannedHours*100) : 0;
+
+  const power = Math.sqrt(3) * (s.voltage||0) * (s.motorLoadAmp||0) * (s.powerFactor||0) * (s.efficiency||0) / 1000; // kW
+  const sme = (s.feedrateTonHr>0) ? (power/s.feedrateTonHr) : 0; // kWh/ton
+
+  const ictKey = (s.lineId||'')+'_'+(s.variantId||'');
+  const ict = (plant.ict||{})[ictKey] || 0;
+  const performance = (runHours>0) ? ((ict * (s.actualOutputBags||0) * bagWeight) / (runHours*3600) * 100) : 0;
+
+  const oee = (availability/100)*(performance/100)*(qualityRate/100)*100;
+  return {variant, bagWeight, goodOutputKg, totalOutputKg, qualityRate, runHours, availability, power, sme, ict, performance, oee};
+}
+function batchMetrics(b){
+  const yieldPct = b.batchWeight>0 ? (b.yieldWeight/b.batchWeight*100) : 0;
+  const rejectPct = b.batchWeight>0 ? (b.reject/b.batchWeight*100) : 0;
+  const recoveryPct = b.batchWeight>0 ? (b.finishedOutput/b.batchWeight*100) : 0;
+  return {yieldPct, rejectPct, recoveryPct};
+}
+function monthPrefix(){ return new Date().toISOString().slice(0,7); }
+function avg(arr){ return arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0; }
+function groupSum(list, keyFn, valFn){ const m={}; list.forEach(i=>{const k=keyFn(i); m[k]=(m[k]||0)+valFn(i);}); return m; }
+function groupAvg(list, keyFn, valFn){ const s={},c={}; list.forEach(i=>{const k=keyFn(i); s[k]=(s[k]||0)+valFn(i); c[k]=(c[k]||0)+1;}); const o={}; Object.keys(s).forEach(k=>o[k]=s[k]/c[k]); return o; }
+function hbarTable(dataObj, unit, decimals){
+  const entries = Object.entries(dataObj);
+  if(!entries.length) return `<div class="no-data">No data available.</div>`;
+  const max = Math.max(...entries.map(e=>e[1]), 0.0001);
+  return entries.map(([k,v])=>`<div class="hbar-row"><div class="hbar-label">${esc(k)}</div><div class="hbar-track"><div class="hbar-fill" style="width:${(v/max*100).toFixed(1)}%"></div></div><div class="hbar-val">${decimals?v.toFixed(2):fmt(v)} ${unit}</div></div>`).join('');
+}
+function gaugeCard(title, value){
+  const color = value>=85?'var(--good)':value>=60?'var(--amber)':'var(--bad)';
+  return `<div class="gauge-card"><div class="gauge-title">${title}</div>${gaugeSvg(Math.min(100,Math.max(0,value)), color)}<div class="gauge-val" style="color:${color}">${value.toFixed(1)}%</div></div>`;
+}
+function gaugeSvg(pct, color){
+  const r=54, cx=68, cy=68;
+  const toXY=(ang)=>{const rad=ang*Math.PI/180; return [cx+r*Math.cos(rad), cy-r*Math.sin(rad)];};
+  const [sx,sy]=toXY(180); const [ex,ey]=toXY(180-(pct/100)*180);
+  const largeArc = pct>50?1:0;
+  return `<svg viewBox="0 0 136 74" width="136" height="74">
+    <path d="M ${cx-r} ${cy} A ${r} ${r} 0 0 1 ${cx+r} ${cy}" fill="none" stroke="#3A3F45" stroke-width="11" stroke-linecap="round"/>
+    <path d="M ${sx} ${sy} A ${r} ${r} 0 ${largeArc} 1 ${ex} ${ey}" fill="none" stroke="${color}" stroke-width="11" stroke-linecap="round"/>
+  </svg>`;
+}
+function monthLabel(ym){ const [y,m]=ym.split('-'); return new Date(parseInt(y),parseInt(m)-1,1).toLocaleDateString(undefined,{month:'long',year:'numeric'}).toUpperCase(); }
+
+/* ---------------- RENDER SHELL ---------------- */
 function render(){ renderSidebar(); renderMain(); }
 
 function renderSidebar(){
-  const el = document.getElementById('plantList');
-  if(!plants.length){ el.innerHTML = `<div style="font-size:12px;color:var(--text-dim2);font-family:'JetBrains Mono';">No facilities yet.</div>`; return; }
-  const ym = monthPrefix();
-  el.innerHTML = plants.map(p=>{
-    const list = (shifts[p.id]||[]).filter(s=>s.date.startsWith(ym));
-    const totalOut = list.reduce((s,e)=>s+(e.goodOutput||0),0);
-    return `<div class="plant-card ${p.id===activePlantId?'active':''}" onclick="selectPlant('${p.id}')">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-        <div class="pname">${esc(p.name)}</div>
-        <button class="del-btn" onclick="deletePlant('${p.id}', event)">✕</button>
-      </div>
-      <div class="psub">MTD GOOD OUTPUT ${fmt(totalOut)} KG · ${list.length} SHIFTS</div>
-    </div>`;
-  }).join('');
+  const el = document.getElementById('sidebar');
+  let html = '';
+  if(currentRole==='admin'){
+    html += `<button class="admin-nav-btn" onclick="openAdminView('facilities')">⚙ Admin: Facilities</button>`;
+    html += `<button class="admin-nav-btn" onclick="openAdminView('users')">👤 Admin: User Accounts</button>`;
+  }
+  html += `<h2 class="eyebrow">Facilities</h2><div>`;
+  if(!plants.length){
+    html += `<div style="font-size:12px;color:var(--text-dim2);font-family:'JetBrains Mono';">No facilities yet.</div>`;
+  } else {
+    plants.forEach(p=>{
+      html += `<div class="plant-card ${p.id===activePlantId && !adminView?'active':''}" onclick="selectPlant('${p.id}')">
+        <div style="display:flex;justify-content:space-between;">
+          <div class="pname">${esc(p.name)}</div>
+          ${currentRole==='admin'?`<button class="del-btn" onclick="deletePlant('${p.id}', event)">✕</button>`:''}
+        </div>
+      </div>`;
+    });
+  }
+  html += `</div>`;
+  if(currentRole==='admin'){
+    html += `<button class="add-btn" onclick="openAddPlant()">+ Add Facility</button>`;
+    html += `<button class="add-btn" onclick="loadDefaultStructure()">⚡ Load Plant 1–4 Structure</button>`;
+  }
+  el.innerHTML = html;
 }
 
 function renderMain(){
   const main = document.getElementById('mainArea');
-  if(!loaded){ main.innerHTML = `<div class="empty-state">Loading production data…</div>`; return; }
+  if(adminView==='facilities'){ main.innerHTML = renderFacilitiesAdmin(); return; }
+  if(adminView==='users'){ main.innerHTML = `<div class="workspace-head"><h1>User Accounts</h1></div>` + renderUsersPanel(); return; }
   if(!plants.length){
-    main.innerHTML = `<div class="empty-state"><h2 style="color:var(--text-dim);">No facilities added</h2><p>Add a facility on the left to start logging shift data.</p></div>`;
+    main.innerHTML = `<div class="empty-state"><h2 style="color:var(--text-dim);">No facilities available</h2><p>${currentRole==='admin'?'Add a facility on the left to get started.':'Ask your admin to assign you a facility.'}</p></div>`;
     return;
   }
-  const plant = plants.find(p=>p.id===activePlantId);
+  const plant = currentPlant();
   if(!plant){ main.innerHTML=''; return; }
 
   main.innerHTML = `
@@ -406,157 +643,175 @@ function renderMain(){
       <div>
         <div class="eyebrow">Facility Record</div>
         <h1>${esc(plant.name)}</h1>
-        <div class="sub-line">STANDARD SHIFT: ${plant.shiftHours} HRS · ${(plant.lines||[]).length} LINE(S) · ${(plant.variants||[]).length} VARIANT(S) · <a href="#" onclick="openLines('${plant.id}');return false;">MANAGE LINES</a> · <a href="#" onclick="openVariants('${plant.id}');return false;">MANAGE VARIANTS</a></div>
+        <div class="sub-line">STANDARD SHIFT: ${plant.shiftHours} HRS · ${(plant.lines||[]).length} LINE(S) · ${(plant.variants||[]).length} VARIANT(S)
+        ${currentRole==='admin' ? ` · <a href="#" onclick="openLines('${plant.id}');return false;">LINES</a> · <a href="#" onclick="openVariants('${plant.id}');return false;">VARIANTS</a> · <a href="#" onclick="openIct('${plant.id}');return false;">IDEAL CYCLE TIME</a>` : ''}</div>
       </div>
       <div class="tabs">
         <button class="tab-btn ${activeTab==='shift'?'active':''}" onclick="setTab('shift')">Shift Log</button>
+        <button class="tab-btn ${activeTab==='batch'?'active':''}" onclick="setTab('batch')">Batch Performance</button>
         <button class="tab-btn ${activeTab==='die'?'active':''}" onclick="setTab('die')">Die Log</button>
         <button class="tab-btn ${activeTab==='report'?'active':''}" onclick="setTab('report')">Monthly Report</button>
       </div>
     </div>
     <div id="tabContent"></div>
   `;
-  if(activeTab==='shift' && (!plant.lines || !plant.lines.length)){
-    document.getElementById('tabContent').innerHTML = `<div class="panel"><div class="no-data">Add at least one production line before logging shifts. <a href="#" onclick="openLines('${plant.id}');return false;">Manage Lines →</a></div></div>`;
-    return;
-  }
-  if(activeTab==='shift' && (!plant.variants || !plant.variants.length)){
-    document.getElementById('tabContent').innerHTML = `<div class="panel"><div class="no-data">Add at least one product variant before logging shifts. <a href="#" onclick="openVariants('${plant.id}');return false;">Manage Variants →</a></div></div>`;
+  if((!plant.lines||!plant.lines.length) || (!plant.variants||!plant.variants.length)){
+    document.getElementById('tabContent').innerHTML = `<div class="panel"><div class="no-data">${currentRole==='admin' ? 'Set up at least one line and one variant for this facility (links above) before logging data.' : 'This facility is not fully set up yet — ask your admin to add lines and variants.'}</div></div>`;
     return;
   }
   if(activeTab==='shift') renderShiftTab(plant);
+  else if(activeTab==='batch') renderBatchTab(plant);
   else if(activeTab==='die') renderDieTab(plant);
   else renderReportTab(plant);
 }
 
-/* ---------------- SHIFT LOG TAB ---------------- */
-function resetDraft(plant){
-  draftHourly = [{hour:1,current:'',voltage:'',pf:0.85,feedrate:''}];
-  draftQuality = [];
+function renderFacilitiesAdmin(){
+  let html = `<div class="workspace-head"><h1>Admin — Facilities</h1></div>`;
+  if(!plants.length){ html += `<div class="panel"><div class="no-data">No facilities yet. Use "+ Add Facility" on the left.</div></div>`; return html; }
+  plants.forEach(p=>{
+    html += `<div class="panel">
+      <div class="panel-title">${esc(p.name)}</div>
+      <div class="grid-row">
+        <div><span class="eyebrow">Lines</span><div style="margin-top:6px;">${(p.lines||[]).map(l=>`<span class="badge badge-info" style="margin-right:6px;margin-bottom:4px;display:inline-block;">${esc(l.name)} · ${esc(l.type)}</span>`).join('') || '<span class="no-data" style="padding:0;">None</span>'}</div></div>
+      </div>
+      <div class="grid-row" style="margin-top:12px;">
+        <div><span class="eyebrow">Variants</span><div style="margin-top:6px;">${(p.variants||[]).map(v=>`<span class="badge badge-mid" style="margin-right:6px;margin-bottom:4px;display:inline-block;">${esc(v.name)} · ${v.bagWeight||0}kg/bag</span>`).join('') || '<span class="no-data" style="padding:0;">None</span>'}</div></div>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:8px;">
+        <button class="btn small" onclick="openLines('${p.id}')">Manage Lines</button>
+        <button class="btn small" onclick="openVariants('${p.id}')">Manage Variants</button>
+        <button class="btn small" onclick="openIct('${p.id}')">Ideal Cycle Time Matrix</button>
+      </div>
+    </div>`;
+  });
+  return html;
 }
 
+/* ---------------- SHIFT LOG TAB ---------------- */
+function dryerFieldGrid(prefix, values){
+  let html='';
+  for(let i=1;i<=DRYER_ZONES;i++){
+    html += `<div class="field"><label>T${i}</label><input type="number" id="${prefix}_t${i}" value="${values&&values['t'+i]!=null?values['t'+i]:''}"></div>`;
+  }
+  return html;
+}
 function renderShiftTab(plant){
-  if(!draftHourly.length) resetDraft(plant);
+  draftQuality = [];
   const content = document.getElementById('tabContent');
-  const list = [...(shifts[plant.id]||[])].sort((a,b)=> (b.date+b.shiftLabel).localeCompare(a.date+a.shiftLabel));
+  const list = [...shiftsCache].sort((a,b)=>(b.date+b.shiftLabel).localeCompare(a.date+a.shiftLabel));
 
   content.innerHTML = `
     <div class="panel">
-      <div class="panel-title">New Shift Entry</div>
-      <div class="grid-row">
+      <div class="panel-title">New Shift Entry — Extruder Working Parameters</div>
+
+      <div class="group-title">Basic Info</div>
+      <div class="field-grid">
         <div class="field"><label>Date</label><input type="date" id="s_date" value="${new Date().toISOString().slice(0,10)}"></div>
-        <div class="field"><label>Shift</label>
-          <select id="s_label"><option>Day</option><option>Afternoon</option><option>Night</option></select>
-        </div>
-        <div class="field wide"><label>Line</label>
-          <select id="s_line">${plant.lines.map(l=>`<option value="${l.id}">${esc(l.name)} — ${esc(l.type)}</option>`).join('')}</select>
-        </div>
-        <div class="field wide"><label>Variant</label>
-          <select id="s_variant">${plant.variants.map(v=>`<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select>
-        </div>
+        <div class="field"><label>Shift</label><select id="s_label"><option>Day</option><option>Afternoon</option><option>Night</option></select></div>
+        <div class="field"><label>Line</label><select id="s_line">${plant.lines.map(l=>`<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Variant / Product</label><select id="s_variant">${plant.variants.map(v=>`<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Recipe ID</label><input id="s_recipe" placeholder="e.g. 4299"></div>
         <div class="field"><label>Planned Hours</label><input type="number" id="s_planned" value="${plant.shiftHours}"></div>
         <div class="field"><label>Downtime (hrs)</label><input type="number" step="0.1" id="s_downtime" value="0"></div>
       </div>
-      <div class="grid-row" style="margin-top:12px;">
-        <div class="field"><label>Raw Material Input (kg)</label><input type="number" id="s_raw" placeholder="0"></div>
-        <div class="field"><label>Good Output (kg)</label><input type="number" id="s_good" placeholder="0"></div>
+
+      <div class="group-title">Output</div>
+      <div class="field-grid">
+        <div class="field"><label>Actual Output (bags)</label><input type="number" id="s_bags" placeholder="0"></div>
         <div class="field"><label>Rejected Qty (kg)</label><input type="number" id="s_reject" placeholder="0"></div>
+        <div class="field"><label>KG / HR (reading)</label><input type="number" id="s_kghr" placeholder="0"></div>
       </div>
 
-      <div class="sub-block">
-        <div class="sub-block-title">Hourly Extruder Readings (for SME)</div>
-        <table class="mini-table">
-          <thead><tr><th>Hr</th><th>Current (A)</th><th>Voltage (V)</th><th>PF</th><th>Feedrate (t/hr)</th><th></th></tr></thead>
-          <tbody id="hourlyRows"></tbody>
-        </table>
-        <button class="btn add-row small" onclick="addHourlyRow('${plant.id}')" style="margin-top:8px;">+ Add Hour</button>
-        <div class="calc-note">Power (kW) = √3 × V × I × PF ÷ 1000. SME (kWh/ton) = Σ Power ÷ Σ Feedrate. PF defaults to 0.85 — edit if you have the actual value.</div>
+      <div class="group-title">Cylinder &amp; Extruder</div>
+      <div class="field-grid">
+        <div class="field"><label>Cylinder Steam</label><input type="number" id="s_cylSteam" placeholder="0"></div>
+        <div class="field"><label>Cylinder Water</label><input type="number" id="s_cylWater" placeholder="0"></div>
+        <div class="field"><label>Extruder Steam</label><input type="number" id="s_extSteam" placeholder="0"></div>
+        <div class="field"><label>Extruder Water</label><input type="number" id="s_extWater" placeholder="0"></div>
+        <div class="field"><label>Barrel T-1</label><input type="number" id="s_barrel1" placeholder="0"></div>
+        <div class="field"><label>Barrel T-2</label><input type="number" id="s_barrel2" placeholder="0"></div>
+        <div class="field"><label>Barrel T-3</label><input type="number" id="s_barrel3" placeholder="0"></div>
       </div>
 
-      <div class="sub-block">
-        <div class="sub-block-title">Quality Issues Logged This Shift</div>
-        <div id="qualityRows"></div>
-        <button class="btn add-row small" onclick="addQualityRow()" style="margin-top:8px;">+ Add Quality Issue</button>
+      <div class="group-title">Dryer Temperature (°C)</div>
+      <div class="field-grid">${dryerFieldGrid('s')}</div>
+
+      <div class="group-title">Bed Speed (Hz)</div>
+      <div class="field-grid">
+        <div class="field"><label>Top</label><input type="number" id="s_bedTop" placeholder="0"></div>
+        <div class="field"><label>Bottom</label><input type="number" id="s_bedBottom" placeholder="0"></div>
       </div>
 
-      <div style="margin-top:16px;">
-        <button class="btn" onclick="submitShift('${plant.id}')">Save Shift Entry</button>
+      <div class="group-title">Q.A. Checks</div>
+      <div class="field-grid">
+        <div class="field"><label>Moisture (%)</label><input type="number" step="0.1" id="s_moisture" placeholder="0"></div>
+        <div class="field"><label>Floating Eff (%)</label><input type="number" step="0.1" id="s_floatEff" placeholder="0"></div>
+        <div class="field"><label>Bulk Density</label><input type="number" id="s_bulkDensity" placeholder="0"></div>
       </div>
+
+      <div class="group-title">Power &amp; SME</div>
+      <div class="field-grid">
+        <div class="field"><label>Motor Load (Amp)</label><input type="number" id="s_amp" placeholder="0"></div>
+        <div class="field"><label>Voltage (Volts)</label><input type="number" id="s_volt" placeholder="0"></div>
+        <div class="field"><label>Power Factor</label><input type="number" step="0.01" id="s_pf" value="0.85"></div>
+        <div class="field"><label>Efficiency</label><input type="number" step="0.01" id="s_eff" value="0.90"></div>
+        <div class="field"><label>Feedrate (Ton/hr)</label><input type="number" step="0.001" id="s_feedrate" placeholder="0"></div>
+      </div>
+      <div class="calc-note">Power (kW) = √3 × Voltage × Current × Power Factor × Efficiency. SME (kWh/ton) = Power ÷ Feedrate. Ideal Cycle Time is pulled automatically from the Line + Variant matrix.</div>
+
+      <div class="group-title">Quality Issues Logged This Shift</div>
+      <div id="qualityRows"></div>
+      <button class="btn small" style="background:var(--panel-2);color:var(--amber);border:1px dashed var(--amber-dim);margin-top:8px;" onclick="addQualityRow()">+ Add Quality Issue</button>
+
+      <div style="margin-top:16px;"><button class="btn" onclick="submitShift('${plant.id}')">Save Shift Entry</button></div>
     </div>
 
     <div class="panel">
-      <div class="panel-title">Logged Shifts</div>
+      <div class="panel-title">Logged Shifts (click a row for full parameters)</div>
       <table>
-        <thead><tr><th>Date</th><th>Shift</th><th>Line</th><th>Variant</th><th class="num">Good Out</th><th class="num">Reject</th><th class="num">Yield</th><th class="num">Avail</th><th class="num">Perf</th><th class="num">OEE</th><th class="num">SME</th><th></th></tr></thead>
+        <thead><tr><th>Date</th><th>Shift</th><th>Line</th><th>Variant</th><th class="num">Bags</th><th class="num">Good Kg</th><th class="num">Avail</th><th class="num">Perf</th><th class="num">Qual</th><th class="num">OEE</th><th class="num">SME</th><th></th></tr></thead>
         <tbody>
           ${list.length ? list.map(s=>{
             const m = shiftMetrics(s, plant);
-            return `<tr>
+            const oc = oeeClass(m.oee);
+            return `<tr class="clickable" onclick="showShiftDetail('${s.id}')">
               <td>${s.date}</td><td>${s.shiftLabel}</td><td>${esc(lineName(plant,s.lineId))}</td><td>${m.variant?esc(m.variant.name):'—'}</td>
-              <td class="num">${fmt(s.goodOutput)}</td>
-              <td class="num">${fmt(s.rejectedQty)}</td>
-              <td class="num">${m.yieldPct.toFixed(0)}%</td>
+              <td class="num">${fmt(s.actualOutputBags)}</td>
+              <td class="num">${fmt(m.goodOutputKg)}</td>
               <td class="num">${m.availability.toFixed(0)}%</td>
               <td class="num">${m.performance.toFixed(0)}%</td>
-              <td class="num">${oeeBadge(m.oee)}</td>
+              <td class="num">${m.qualityRate.toFixed(0)}%</td>
+              <td class="num"><span class="badge ${oc.cls}">${m.oee.toFixed(0)}%</span></td>
               <td class="num">${m.sme>0?m.sme.toFixed(2):'—'}</td>
-              <td class="num"><button class="del-btn" onclick="deleteShift('${plant.id}','${s.id}')">✕</button></td>
+              <td class="num" onclick="event.stopPropagation()"><button class="del-btn" onclick="deleteShift('${plant.id}','${s.id}')">✕</button></td>
             </tr>`;
           }).join('') : `<tr><td colspan="12" class="no-data">No shifts logged yet.</td></tr>`}
         </tbody>
       </table>
     </div>
   `;
-  renderHourlyRows();
   renderQualityRows();
 }
-
-function oeeBadge(v){
-  const cls = v>=85 ? 'badge-good' : v>=60 ? 'badge-mid' : 'badge-bad';
-  return `<span class="badge ${cls}">${v.toFixed(0)}%</span>`;
-}
-
-function renderHourlyRows(){
-  const tbody = document.getElementById('hourlyRows');
-  if(!tbody) return;
-  tbody.innerHTML = draftHourly.map((r,i)=>`
-    <tr>
-      <td><input type="number" value="${r.hour}" onchange="updateHourly(${i},'hour',this.value)" style="width:50px;"></td>
-      <td><input type="number" value="${r.current}" onchange="updateHourly(${i},'current',this.value)"></td>
-      <td><input type="number" value="${r.voltage}" onchange="updateHourly(${i},'voltage',this.value)"></td>
-      <td><input type="number" step="0.01" value="${r.pf}" onchange="updateHourly(${i},'pf',this.value)" style="width:60px;"></td>
-      <td><input type="number" step="0.01" value="${r.feedrate}" onchange="updateHourly(${i},'feedrate',this.value)"></td>
-      <td><button class="del-btn" onclick="removeHourlyRow(${i})">✕</button></td>
-    </tr>`).join('');
-}
-function addHourlyRow(){ draftHourly.push({hour:draftHourly.length+1,current:'',voltage:'',pf:0.85,feedrate:''}); renderHourlyRows(); }
-function removeHourlyRow(i){ draftHourly.splice(i,1); renderHourlyRows(); }
-function updateHourly(i,key,val){ draftHourly[i][key] = key==='hour' ? val : parseFloat(val)||0; }
-
 function renderQualityRows(){
   const wrap = document.getElementById('qualityRows');
   if(!wrap) return;
   if(!draftQuality.length){ wrap.innerHTML = `<div style="color:var(--text-dim2);font-size:12px;">No quality issues added for this shift.</div>`; return; }
   wrap.innerHTML = draftQuality.map((q,i)=>`
-    <div class="sub-block" style="background:#202326;margin-top:8px;">
-      <div class="grid-row">
-        <div class="field wide" style="width:100%;"><label>Issue (fill in freely)</label><textarea onchange="updateQuality(${i},'issue',this.value)" placeholder="e.g. Excess fines in 3mm batch, hour 4–6">${esc(q.issue)}</textarea></div>
-      </div>
+    <div class="sub-block">
+      <div class="grid-row"><div class="field" style="width:100%;"><label>Issue (free text)</label><input type="text" value="${esc(q.issue)}" onchange="updateQuality(${i},'issue',this.value)" placeholder="e.g. Excess fines in batch"></div></div>
       <div class="grid-row" style="margin-top:8px;">
         <div class="field"><label>Qty Affected (kg)</label><input type="number" value="${q.qty}" onchange="updateQuality(${i},'qty',this.value)"></div>
-        <div class="field wide"><label>Root Cause</label><input type="text" value="${esc(q.rootCause)}" onchange="updateQuality(${i},'rootCause',this.value)" placeholder="e.g. Die temp fluctuation"></div>
+        <div class="field" style="flex:1;"><label>Root Cause</label><input type="text" value="${esc(q.rootCause)}" onchange="updateQuality(${i},'rootCause',this.value)"></div>
       </div>
       <div class="grid-row" style="margin-top:8px;">
-        <div class="field wide"><label>Corrective Action</label><input type="text" value="${esc(q.action)}" onchange="updateQuality(${i},'action',this.value)" placeholder="e.g. Recalibrated temp controller"></div>
-        <div class="field"><label>Effectiveness</label>
-          <select onchange="updateQuality(${i},'effectiveness',this.value)">
-            <option ${q.effectiveness==='Pending'?'selected':''}>Pending</option>
-            <option ${q.effectiveness==='Effective'?'selected':''}>Effective</option>
-            <option ${q.effectiveness==='Partially Effective'?'selected':''}>Partially Effective</option>
-            <option ${q.effectiveness==='Not Effective'?'selected':''}>Not Effective</option>
-          </select>
-        </div>
-        <button class="del-btn" onclick="removeQualityRow(${i})" style="align-self:center;">✕ Remove</button>
+        <div class="field" style="flex:1;"><label>Corrective Action</label><input type="text" value="${esc(q.action)}" onchange="updateQuality(${i},'action',this.value)"></div>
+        <div class="field"><label>Effectiveness</label><select onchange="updateQuality(${i},'effectiveness',this.value)">
+          <option ${q.effectiveness==='Pending'?'selected':''}>Pending</option>
+          <option ${q.effectiveness==='Effective'?'selected':''}>Effective</option>
+          <option ${q.effectiveness==='Partially Effective'?'selected':''}>Partially Effective</option>
+          <option ${q.effectiveness==='Not Effective'?'selected':''}>Not Effective</option>
+        </select></div>
+        <button class="del-btn" onclick="removeQualityRow(${i})" style="align-self:center;">✕</button>
       </div>
     </div>`).join('');
 }
@@ -564,69 +819,183 @@ function addQualityRow(){ draftQuality.push({issue:'',qty:0,rootCause:'',action:
 function removeQualityRow(i){ draftQuality.splice(i,1); renderQualityRows(); }
 function updateQuality(i,key,val){ draftQuality[i][key] = key==='qty' ? (parseFloat(val)||0) : val; }
 
+function collectDryer(prefix){
+  const o={};
+  for(let i=1;i<=DRYER_ZONES;i++){ const el=document.getElementById(`${prefix}_t${i}`); o['t'+i]= el? (parseFloat(el.value)||0) : 0; }
+  return o;
+}
 async function submitShift(plantId){
-  const date = document.getElementById('s_date').value;
-  const shiftLabel = document.getElementById('s_label').value;
-  const lineId = document.getElementById('s_line').value;
-  const variantId = document.getElementById('s_variant').value;
-  const plannedHours = parseFloat(document.getElementById('s_planned').value)||0;
-  const downtimeHours = parseFloat(document.getElementById('s_downtime').value)||0;
-  const rawMaterial = parseFloat(document.getElementById('s_raw').value)||0;
-  const goodOutput = parseFloat(document.getElementById('s_good').value)||0;
-  const rejectedQty = parseFloat(document.getElementById('s_reject').value)||0;
+  const g = id=>document.getElementById(id);
+  const date = g('s_date').value;
   if(!date){ alert('Enter a date.'); return; }
-
-  const hourly = draftHourly.filter(r=> r.current!=='' || r.voltage!=='' || r.feedrate!=='').map(r=>({hour:r.hour,current:parseFloat(r.current)||0,voltage:parseFloat(r.voltage)||0,pf:parseFloat(r.pf)||0.85,feedrate:parseFloat(r.feedrate)||0}));
-  const quality = draftQuality.filter(q=>q.issue.trim()!=='');
-
-  shifts[plantId] = shifts[plantId]||[];
-  shifts[plantId].push({id:uid('shift'),date,shiftLabel,lineId,variantId,rawMaterial,goodOutput,rejectedQty,plannedHours,downtimeHours,hourly,quality});
-  await saveShifts(plantId);
-  const plant = plants.find(p=>p.id===plantId);
-  resetDraft(plant);
+  const record = {
+    date, shiftLabel:g('s_label').value, lineId:g('s_line').value, variantId:g('s_variant').value, recipeId:g('s_recipe').value,
+    plannedHours: parseFloat(g('s_planned').value)||0, downtimeHours: parseFloat(g('s_downtime').value)||0,
+    actualOutputBags: parseFloat(g('s_bags').value)||0, rejectedQty: parseFloat(g('s_reject').value)||0, kgHr: parseFloat(g('s_kghr').value)||0,
+    cylSteam: parseFloat(g('s_cylSteam').value)||0, cylWater: parseFloat(g('s_cylWater').value)||0,
+    extSteam: parseFloat(g('s_extSteam').value)||0, extWater: parseFloat(g('s_extWater').value)||0,
+    barrel1: parseFloat(g('s_barrel1').value)||0, barrel2: parseFloat(g('s_barrel2').value)||0, barrel3: parseFloat(g('s_barrel3').value)||0,
+    dryer: collectDryer('s'),
+    bedTop: parseFloat(g('s_bedTop').value)||0, bedBottom: parseFloat(g('s_bedBottom').value)||0,
+    moisture: parseFloat(g('s_moisture').value)||0, floatEff: parseFloat(g('s_floatEff').value)||0, bulkDensity: parseFloat(g('s_bulkDensity').value)||0,
+    motorLoadAmp: parseFloat(g('s_amp').value)||0, voltage: parseFloat(g('s_volt').value)||0,
+    powerFactor: parseFloat(g('s_pf').value)||0, efficiency: parseFloat(g('s_eff').value)||0,
+    feedrateTonHr: parseFloat(g('s_feedrate').value)||0,
+    quality: draftQuality.filter(q=>q.issue.trim()!=='')
+  };
+  await db.collection('plants').doc(plantId).collection('shifts').add(record);
+  draftQuality=[];
   render();
 }
 async function deleteShift(plantId, shiftId){
-  shifts[plantId] = (shifts[plantId]||[]).filter(s=>s.id!==shiftId);
-  await saveShifts(plantId);
+  await db.collection('plants').doc(plantId).collection('shifts').doc(shiftId).delete();
+}
+function showShiftDetail(shiftId){
+  const plant = currentPlant();
+  const s = shiftsCache.find(x=>x.id===shiftId);
+  if(!s) return;
+  const m = shiftMetrics(s, plant);
+  const oc = oeeClass(m.oee);
+  const dryerItems = Object.keys(s.dryer||{}).map(k=>`<div class="detail-item"><div class="dl">${k.toUpperCase()}</div><div class="dv">${s.dryer[k]}</div></div>`).join('');
+  document.getElementById('modalRoot').innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
+      <div class="modal wide">
+        <h3>${s.date} — ${s.shiftLabel} Shift — ${esc(lineName(plant,s.lineId))}</h3>
+        <div class="group-title">Basic Info</div>
+        <div class="detail-grid">
+          <div class="detail-item"><div class="dl">Recipe ID</div><div class="dv">${esc(s.recipeId||'—')}</div></div>
+          <div class="detail-item"><div class="dl">Product</div><div class="dv">${m.variant?esc(m.variant.name):'—'}</div></div>
+          <div class="detail-item"><div class="dl">Run Hours</div><div class="dv">${m.runHours.toFixed(1)}</div></div>
+          <div class="detail-item"><div class="dl">Downtime</div><div class="dv">${s.downtimeHours} hrs</div></div>
+          <div class="detail-item"><div class="dl">Actual Output</div><div class="dv">${fmt(s.actualOutputBags)} bags</div></div>
+          <div class="detail-item"><div class="dl">Good Output</div><div class="dv">${fmt(m.goodOutputKg)} kg</div></div>
+          <div class="detail-item"><div class="dl">Rejected</div><div class="dv">${fmt(s.rejectedQty)} kg</div></div>
+          <div class="detail-item"><div class="dl">KG/HR Reading</div><div class="dv">${fmt(s.kgHr)}</div></div>
+        </div>
+        <div class="group-title">Cylinder &amp; Extruder</div>
+        <div class="detail-grid">
+          <div class="detail-item"><div class="dl">Cylinder Steam</div><div class="dv">${s.cylSteam}</div></div>
+          <div class="detail-item"><div class="dl">Cylinder Water</div><div class="dv">${s.cylWater}</div></div>
+          <div class="detail-item"><div class="dl">Extruder Steam</div><div class="dv">${s.extSteam}</div></div>
+          <div class="detail-item"><div class="dl">Extruder Water</div><div class="dv">${s.extWater}</div></div>
+          <div class="detail-item"><div class="dl">Barrel T-1</div><div class="dv">${s.barrel1}</div></div>
+          <div class="detail-item"><div class="dl">Barrel T-2</div><div class="dv">${s.barrel2}</div></div>
+          <div class="detail-item"><div class="dl">Barrel T-3</div><div class="dv">${s.barrel3}</div></div>
+        </div>
+        <div class="group-title">Dryer Temperature (°C)</div>
+        <div class="detail-grid">${dryerItems}</div>
+        <div class="group-title">Bed Speed / Q.A.</div>
+        <div class="detail-grid">
+          <div class="detail-item"><div class="dl">Bed Speed Top</div><div class="dv">${s.bedTop} Hz</div></div>
+          <div class="detail-item"><div class="dl">Bed Speed Bottom</div><div class="dv">${s.bedBottom} Hz</div></div>
+          <div class="detail-item"><div class="dl">Moisture</div><div class="dv">${s.moisture}%</div></div>
+          <div class="detail-item"><div class="dl">Floating Eff</div><div class="dv">${s.floatEff}%</div></div>
+          <div class="detail-item"><div class="dl">Bulk Density</div><div class="dv">${s.bulkDensity}</div></div>
+        </div>
+        <div class="group-title">Power &amp; SME</div>
+        <div class="detail-grid">
+          <div class="detail-item"><div class="dl">Motor Load</div><div class="dv">${s.motorLoadAmp} A</div></div>
+          <div class="detail-item"><div class="dl">Voltage</div><div class="dv">${s.voltage} V</div></div>
+          <div class="detail-item"><div class="dl">Power Factor</div><div class="dv">${s.powerFactor}</div></div>
+          <div class="detail-item"><div class="dl">Efficiency</div><div class="dv">${s.efficiency}</div></div>
+          <div class="detail-item"><div class="dl">Power</div><div class="dv">${m.power.toFixed(2)} kW</div></div>
+          <div class="detail-item"><div class="dl">Feedrate</div><div class="dv">${s.feedrateTonHr} t/hr</div></div>
+          <div class="detail-item"><div class="dl">SME</div><div class="dv">${m.sme.toFixed(2)} kWh/t</div></div>
+          <div class="detail-item"><div class="dl">Ideal Cycle Time</div><div class="dv">${m.ict} s/kg</div></div>
+        </div>
+        <div class="group-title">OEE Breakdown</div>
+        <div class="detail-grid">
+          <div class="detail-item"><div class="dl">Availability</div><div class="dv">${m.availability.toFixed(1)}%</div></div>
+          <div class="detail-item"><div class="dl">Performance</div><div class="dv">${m.performance.toFixed(1)}%</div></div>
+          <div class="detail-item"><div class="dl">Quality</div><div class="dv">${m.qualityRate.toFixed(1)}%</div></div>
+          <div class="detail-item"><div class="dl">OEE</div><div class="dv"><span class="badge ${oc.cls}">${m.oee.toFixed(1)}% — ${oc.label}</span></div></div>
+        </div>
+        ${(s.quality&&s.quality.length) ? `<div class="group-title">Quality Issues</div>` + s.quality.map(q=>`<div class="sub-block"><b>${esc(q.issue)}</b> — ${fmt(q.qty)} kg<br><span style="color:var(--text-dim2);">Root cause: ${esc(q.rootCause)} · Action: ${esc(q.action)} · ${q.effectiveness}</span></div>`).join('') : ''}
+        <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Close</button></div>
+      </div>
+    </div>`;
+}
+
+/* ---------------- BATCH PERFORMANCE TAB ---------------- */
+function renderBatchTab(plant){
+  const content = document.getElementById('tabContent');
+  const list = [...batchesCache].sort((a,b)=>b.date.localeCompare(a.date));
+  content.innerHTML = `
+    <div class="panel">
+      <div class="panel-title">New Batch Entry</div>
+      <div class="field-grid">
+        <div class="field"><label>Date</label><input type="date" id="b_date" value="${new Date().toISOString().slice(0,10)}"></div>
+        <div class="field"><label>Line</label><select id="b_line">${plant.lines.map(l=>`<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Variant</label><select id="b_variant">${plant.variants.map(v=>`<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Batch Weight (kg)</label><input type="number" id="b_batchWeight" placeholder="0"></div>
+        <div class="field"><label>Yield Weight (kg)</label><input type="number" id="b_yieldWeight" placeholder="0"></div>
+        <div class="field"><label>Reject (kg)</label><input type="number" id="b_reject" placeholder="0"></div>
+        <div class="field"><label>Finished Product Output (kg)</label><input type="number" id="b_finished" placeholder="0"></div>
+      </div>
+      <div style="margin-top:14px;"><button class="btn" onclick="submitBatch('${plant.id}')">Save Batch Entry</button></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Logged Batches</div>
+      <table>
+        <thead><tr><th>Date</th><th>Line</th><th>Variant</th><th class="num">Batch Wt</th><th class="num">Yield Wt</th><th class="num">Reject</th><th class="num">FP Output</th><th class="num">Yield %</th><th class="num">Recovery %</th><th></th></tr></thead>
+        <tbody>
+          ${list.length ? list.map(b=>{
+            const bm = batchMetrics(b);
+            return `<tr>
+              <td>${b.date}</td><td>${esc(lineName(plant,b.lineId))}</td><td>${esc(variantName(plant,b.variantId))}</td>
+              <td class="num">${fmt(b.batchWeight)}</td><td class="num">${fmt(b.yieldWeight)}</td><td class="num">${fmt(b.reject)}</td><td class="num">${fmt(b.finishedOutput)}</td>
+              <td class="num">${bm.yieldPct.toFixed(1)}%</td><td class="num">${bm.recoveryPct.toFixed(1)}%</td>
+              <td class="num"><button class="del-btn" onclick="deleteBatch('${plant.id}','${b.id}')">✕</button></td>
+            </tr>`;
+          }).join('') : `<tr><td colspan="10" class="no-data">No batches logged yet.</td></tr>`}
+        </tbody>
+      </table>
+    </div>`;
+}
+async function submitBatch(plantId){
+  const g = id=>document.getElementById(id);
+  const date = g('b_date').value;
+  if(!date){ alert('Enter a date.'); return; }
+  const record = {
+    date, lineId:g('b_line').value, variantId:g('b_variant').value,
+    batchWeight: parseFloat(g('b_batchWeight').value)||0,
+    yieldWeight: parseFloat(g('b_yieldWeight').value)||0,
+    reject: parseFloat(g('b_reject').value)||0,
+    finishedOutput: parseFloat(g('b_finished').value)||0
+  };
+  await db.collection('plants').doc(plantId).collection('batches').add(record);
   render();
+}
+async function deleteBatch(plantId, batchId){
+  await db.collection('plants').doc(plantId).collection('batches').doc(batchId).delete();
 }
 
 /* ---------------- DIE LOG TAB ---------------- */
 function renderDieTab(plant){
   const content = document.getElementById('tabContent');
   const dieLines = (plant.lines||[]).filter(l=>l.type!=='Crumbler');
-  const list = [...(dies[plant.id]||[])].sort((a,b)=>b.installDate.localeCompare(a.installDate));
+  const list = [...diesCache].sort((a,b)=>b.installDate.localeCompare(a.installDate));
   if(!dieLines.length){
-    content.innerHTML = `<div class="panel"><div class="no-data">No extruder or pellet mill lines set up yet (crumbler lines don't use dies). <a href="#" onclick="openLines('${plant.id}');return false;">Manage Lines →</a></div></div>`;
+    content.innerHTML = `<div class="panel"><div class="no-data">No extruder or pellet mill lines set up (crumbler lines don't use dies).</div></div>`;
     return;
   }
   content.innerHTML = `
     <div class="panel">
       <div class="panel-title">Log Die Event</div>
-      <div class="grid-row">
-        <div class="field wide"><label>Line</label>
-          <select id="d_line">${dieLines.map(l=>`<option value="${l.id}">${esc(l.name)} — ${esc(l.type)}</option>`).join('')}</select>
-        </div>
-        <div class="field"><label>Die ID / Name</label><input id="d_id" placeholder="e.g. DIE-014"></div>
+      <div class="field-grid">
+        <div class="field"><label>Line</label><select id="d_line">${dieLines.map(l=>`<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Die ID</label><input id="d_id" placeholder="e.g. DIE-014"></div>
         <div class="field"><label>Install Date</label><input type="date" id="d_install" value="${new Date().toISOString().slice(0,10)}"></div>
-        <div class="field"><label>Status</label>
-          <select id="d_status" onchange="toggleRemovalFields(this.value)">
-            <option value="Active">Still Active</option>
-            <option value="Removed">Removed</option>
-          </select>
-        </div>
+        <div class="field"><label>Status</label><select id="d_status" onchange="document.getElementById('removalFields').style.display=this.value==='Removed'?'flex':'none'"><option value="Active">Still Active</option><option value="Removed">Removed</option></select></div>
       </div>
-      <div class="grid-row" id="removalFields" style="display:none;margin-top:12px;">
+      <div class="field-grid" id="removalFields" style="display:none;margin-top:10px;">
         <div class="field"><label>Removal Date</label><input type="date" id="d_removal"></div>
-        <div class="field wide"><label>Removal Reason</label>
-          <select id="d_reason"><option>Wear</option><option>Clogging</option><option>Damage</option><option>Scheduled Maintenance</option><option>Other</option></select>
-        </div>
+        <div class="field"><label>Removal Reason</label><select id="d_reason"><option>Wear</option><option>Clogging</option><option>Damage</option><option>Scheduled Maintenance</option><option>Other</option></select></div>
       </div>
-      <div class="grid-row" style="margin-top:12px;">
+      <div class="field-grid" style="margin-top:10px;">
         <div class="field"><label>Running Hours</label><input type="number" step="0.1" id="d_hours" placeholder="0"></div>
         <div class="field"><label>Throughput (tons)</label><input type="number" step="0.1" id="d_throughput" placeholder="0"></div>
-        <div class="field wide"><label>Notes</label><input type="text" id="d_notes" placeholder="Optional"></div>
+        <div class="field"><label>Notes</label><input type="text" id="d_notes"></div>
       </div>
       <div style="margin-top:14px;"><button class="btn" onclick="submitDie('${plant.id}')">Save Die Record</button></div>
     </div>
@@ -635,46 +1004,35 @@ function renderDieTab(plant){
       <table>
         <thead><tr><th>Line</th><th>Die</th><th>Installed</th><th>Status</th><th>Removed</th><th class="num">Running Hrs</th><th class="num">Throughput (t)</th><th>Reason</th><th></th></tr></thead>
         <tbody>
-          ${list.length ? list.map(d=>`
-            <tr>
-              <td>${esc(lineName(plant,d.lineId))}</td>
-              <td>${esc(d.dieId)}</td>
-              <td>${d.installDate}</td>
-              <td>${d.status==='Active' ? '<span class="badge badge-info">Active</span>' : '<span class="badge badge-dim">Removed</span>'}</td>
-              <td>${d.removalDate||'—'}</td>
-              <td class="num">${d.runningHours?fmt(d.runningHours,1):'—'}</td>
-              <td class="num">${d.throughputTons?fmt(d.throughputTons,1):'—'}</td>
-              <td>${d.reason?esc(d.reason):'—'}</td>
-              <td class="num"><button class="del-btn" onclick="deleteDie('${plant.id}','${d.id}')">✕</button></td>
-            </tr>`).join('') : `<tr><td colspan="9" class="no-data">No die records yet.</td></tr>`}
+          ${list.length ? list.map(d=>`<tr>
+            <td>${esc(lineName(plant,d.lineId))}</td><td>${esc(d.dieId)}</td><td>${d.installDate}</td>
+            <td>${d.status==='Active'?'<span class="badge badge-info">Active</span>':'<span class="badge badge-dim">Removed</span>'}</td>
+            <td>${d.removalDate||'—'}</td><td class="num">${d.runningHours?fmt(d.runningHours,1):'—'}</td><td class="num">${d.throughputTons?fmt(d.throughputTons,1):'—'}</td>
+            <td>${d.reason||'—'}</td><td class="num"><button class="del-btn" onclick="deleteDie('${plant.id}','${d.id}')">✕</button></td>
+          </tr>`).join('') : `<tr><td colspan="9" class="no-data">No die records yet.</td></tr>`}
         </tbody>
       </table>
-    </div>
-  `;
-}
-function toggleRemovalFields(status){
-  document.getElementById('removalFields').style.display = status==='Removed' ? 'flex' : 'none';
+    </div>`;
 }
 async function submitDie(plantId){
-  const lineId = document.getElementById('d_line').value;
-  const dieId = document.getElementById('d_id').value.trim();
-  const installDate = document.getElementById('d_install').value;
-  const status = document.getElementById('d_status').value;
-  const removalDate = status==='Removed' ? document.getElementById('d_removal').value : '';
-  const reason = status==='Removed' ? document.getElementById('d_reason').value : '';
-  const runningHours = parseFloat(document.getElementById('d_hours').value)||0;
-  const throughputTons = parseFloat(document.getElementById('d_throughput').value)||0;
-  const notes = document.getElementById('d_notes').value;
+  const g = id=>document.getElementById(id);
+  const dieId = g('d_id').value.trim();
+  const installDate = g('d_install').value;
   if(!dieId || !installDate){ alert('Enter a die ID and install date.'); return; }
-  dies[plantId] = dies[plantId]||[];
-  dies[plantId].push({id:uid('die'),lineId,dieId,installDate,status,removalDate,runningHours,throughputTons,reason,notes});
-  await saveDies(plantId);
+  const status = g('d_status').value;
+  const record = {
+    lineId:g('d_line').value, dieId, installDate, status,
+    removalDate: status==='Removed'?g('d_removal').value:'',
+    reason: status==='Removed'?g('d_reason').value:'',
+    runningHours: parseFloat(g('d_hours').value)||0,
+    throughputTons: parseFloat(g('d_throughput').value)||0,
+    notes: g('d_notes').value
+  };
+  await db.collection('plants').doc(plantId).collection('dies').add(record);
   render();
 }
 async function deleteDie(plantId, dieRecId){
-  dies[plantId] = (dies[plantId]||[]).filter(d=>d.id!==dieRecId);
-  await saveDies(plantId);
-  render();
+  await db.collection('plants').doc(plantId).collection('dies').doc(dieRecId).delete();
 }
 
 /* ---------------- MONTHLY REPORT TAB ---------------- */
@@ -688,226 +1046,147 @@ function renderReportTab(plant){
       <span class="eyebrow">Line</span>
       <select id="reportLine" onchange="buildReport('${plant.id}', document.getElementById('reportMonth').value, this.value)">
         <option value="all">All Lines</option>
-        ${plant.lines.map(l=>`<option value="${l.id}">${esc(l.name)} — ${esc(l.type)}</option>`).join('')}
+        ${plant.lines.map(l=>`<option value="${l.id}">${esc(l.name)}</option>`).join('')}
       </select>
       <button class="btn small" onclick="window.print()">Print / Export PDF</button>
     </div>
-    <div id="reportBody"></div>
-  `;
+    <div id="reportBody"></div>`;
   buildReport(plant.id, now.toISOString().slice(0,7), 'all');
 }
-
 function buildReport(plantId, ym, lineFilter){
   lineFilter = lineFilter || 'all';
-  const plant = plants.find(p=>p.id===plantId);
+  const plant = currentPlant();
   const body = document.getElementById('reportBody');
-  let list = (shifts[plantId]||[]).filter(s=>s.date.startsWith(ym));
-  if(lineFilter!=='all') list = list.filter(s=>s.lineId===lineFilter);
-  list = list.sort((a,b)=>a.date.localeCompare(b.date));
-  if(!list.length){ body.innerHTML = `<div class="no-data">No shifts logged for ${monthLabel(ym)}${lineFilter!=='all' ? ' on '+esc(lineName(plant,lineFilter)) : ''}.</div>`; return; }
 
-  const metrics = list.map(s=>({s, m:shiftMetrics(s, plant)}));
+  let shiftList = shiftsCache.filter(s=>s.date.startsWith(ym));
+  let batchList = batchesCache.filter(b=>b.date.startsWith(ym));
+  if(lineFilter!=='all'){ shiftList = shiftList.filter(s=>s.lineId===lineFilter); batchList = batchList.filter(b=>b.lineId===lineFilter); }
+  shiftList.sort((a,b)=>a.date.localeCompare(b.date));
 
-  // 1A. Yield analysis
-  const totalRaw = list.reduce((a,s)=>a+(s.rawMaterial||0),0);
-  const totalOut = metrics.reduce((a,x)=>a+x.m.totalOutput,0);
-  const overallYield = totalRaw>0 ? (totalOut/totalRaw*100) : 0;
+  if(!shiftList.length && !batchList.length){ body.innerHTML = `<div class="no-data">No data logged for ${monthLabel(ym)}${lineFilter!=='all'?' on '+esc(lineName(plant,lineFilter)):''}.</div>`; return; }
 
-  // 1B. Raw material by variant
-  const rawByVariant = groupSum(list, s=>variantName(plant,s.variantId), s=>s.rawMaterial||0);
+  const metrics = shiftList.map(s=>({s, m:shiftMetrics(s, plant)}));
 
-  // 2A/2B output & feedrate by variant
-  const outputByVariant = groupSum(list, s=>variantName(plant,s.variantId), s=>s.goodOutput||0);
-  const feedrateByVariant = groupAvg(metrics, x=>variantName(plant,x.s.variantId), x=>x.m.avgFeedrate);
+  // Section 1 — batch based
+  const totalBatchWeight = batchList.reduce((a,b)=>a+(b.batchWeight||0),0);
+  const totalYieldWeight = batchList.reduce((a,b)=>a+(b.yieldWeight||0),0);
+  const overallYield = totalBatchWeight>0 ? (totalYieldWeight/totalBatchWeight*100) : 0;
+  const rawByVariant = groupSum(batchList, b=>variantName(plant,b.variantId), b=>b.batchWeight||0);
 
-  // 2C/2D quality issues + corrective actions
+  // Section 2 — shift based
+  const outputByVariant = groupSum(shiftList, s=>variantName(plant,s.variantId), s=>shiftMetrics(s,plant).goodOutputKg);
+  const feedrateByVariant = groupAvg(shiftList, s=>variantName(plant,s.variantId), s=>s.feedrateTonHr||0);
   const allIssues = [];
-  list.forEach(s=> (s.quality||[]).forEach(q=> allIssues.push({...q, date:s.date, shift:s.shiftLabel, line:lineName(plant,s.lineId), variant:variantName(plant,s.variantId)})));
+  shiftList.forEach(s=>(s.quality||[]).forEach(q=>allIssues.push({...q,date:s.date,shift:s.shiftLabel,line:lineName(plant,s.lineId),variant:variantName(plant,s.variantId)})));
+  const totalRejected = shiftList.reduce((a,s)=>a+(s.rejectedQty||0),0);
+  const totalOutputAll = metrics.reduce((a,x)=>a+x.m.totalOutputKg,0);
+  const rejectByVariant = groupSum(shiftList, s=>variantName(plant,s.variantId), s=>s.rejectedQty||0);
 
-  // 2E total rejections
-  const totalRejected = list.reduce((a,s)=>a+(s.rejectedQty||0),0);
-  const rejectByVariant = groupSum(list, s=>variantName(plant,s.variantId), s=>s.rejectedQty||0);
-
-  // 3. Per-line equipment performance (Extruder/Pellet Mill/Crumbler)
+  // Section 3 — per line
   const linesInScope = lineFilter==='all' ? plant.lines : plant.lines.filter(l=>l.id===lineFilter);
   const linePerf = linesInScope.map(l=>{
     const lm = metrics.filter(x=>x.s.lineId===l.id);
     return {
-      line:l,
-      count:lm.length,
-      availability: avg(lm.map(x=>x.m.availability)),
-      performance: avg(lm.map(x=>x.m.performance)),
-      quality: avg(lm.map(x=>x.m.qualityRate)),
-      oee: avg(lm.map(x=>x.m.oee)),
-      sme: avg(lm.filter(x=>x.m.sme>0).map(x=>x.m.sme)),
+      line:l, count:lm.length,
+      availability: avg(lm.map(x=>x.m.availability)), performance: avg(lm.map(x=>x.m.performance)),
+      quality: avg(lm.map(x=>x.m.qualityRate)), oee: avg(lm.map(x=>x.m.oee)),
+      sme: avg(lm.filter(x=>x.m.sme>0).map(x=>x.m.sme))
     };
   }).filter(lp=>lp.count>0);
 
-  // Overall averages across the scoped shifts (for section headline)
-  const avgAvailability = avg(metrics.map(x=>x.m.availability));
-  const avgPerformance = avg(metrics.map(x=>x.m.performance));
-  const avgQuality = avg(metrics.map(x=>x.m.qualityRate));
-  const avgOee = avg(metrics.map(x=>x.m.oee));
-
-  // Daily output chart (good output)
-  const daysInMonth = new Date(parseInt(ym.slice(0,4)), parseInt(ym.slice(5,7)), 0).getDate();
-  const dayTotals = {};
-  list.forEach(s=>{ dayTotals[s.date] = (dayTotals[s.date]||0) + (s.goodOutput||0); });
-  const maxDay = Math.max(...Object.values(dayTotals), 1);
-  let bars='', labels='';
+  // Daily good output chart
+  const daysInMonth = new Date(parseInt(ym.slice(0,4)),parseInt(ym.slice(5,7)),0).getDate();
+  const dayTotals={};
+  metrics.forEach(x=>{ dayTotals[x.s.date]=(dayTotals[x.s.date]||0)+x.m.goodOutputKg; });
+  const maxDay = Math.max(...Object.values(dayTotals),1);
+  let bars='',labels='';
   for(let d=1; d<=daysInMonth; d++){
-    const ds = `${ym}-${String(d).padStart(2,'0')}`;
-    const v = dayTotals[ds]||0;
-    bars += `<div class="bar ${v>0?'hit':''}" style="height:${v>0?Math.max(4,(v/maxDay)*150):0}px" title="${ds}: ${fmt(v)} kg"></div>`;
-    labels += (d%5===0||d===1) ? `<span>${d}</span>` : `<span></span>`;
+    const ds=`${ym}-${String(d).padStart(2,'0')}`; const v=dayTotals[ds]||0;
+    bars += `<div class="bar" style="flex:1;background:${v>0?'var(--amber)':'var(--amber-dim)'};min-width:5px;border-radius:2px 2px 0 0;height:${v>0?Math.max(4,(v/maxDay)*140):0}px" title="${ds}: ${fmt(v)} kg"></div>`;
+    labels += `<span style="flex:1;text-align:center;font-size:8.5px;color:var(--text-dim2);font-family:'JetBrains Mono';">${(d%5===0||d===1)?d:''}</span>`;
   }
 
-  // Die history for this plant (all-time, not month-filtered — infrequent events)
-  let dieList = [...(dies[plantId]||[])];
+  // Section 4 — dies
+  let dieList = [...diesCache];
   if(lineFilter!=='all') dieList = dieList.filter(d=>d.lineId===lineFilter);
-  dieList = dieList.sort((a,b)=>a.installDate.localeCompare(b.installDate));
+  dieList.sort((a,b)=>a.installDate.localeCompare(b.installDate));
   const removedDies = dieList.filter(d=>d.status==='Removed' && d.runningHours>0);
   const avgLifeHours = removedDies.length ? avg(removedDies.map(d=>d.runningHours)) : 0;
   const avgLifeTons = removedDies.length ? avg(removedDies.map(d=>d.throughputTons)) : 0;
 
   body.innerHTML = `
     <div class="panel">
-      <h3 style="font-size:16px;margin-bottom:14px;"><span class="section-num">1.</span>Batch Performance Summary</h3>
+      <h3 style="font-size:15px;margin-bottom:12px;"><span class="section-num">1.</span>Batch Performance Summary</h3>
       <div class="panel-title">A. Batch Production Yield Analysis</div>
       <div class="stat-grid">
-        <div class="stat-card"><div class="label">Total Raw Material</div><div class="value">${fmt(totalRaw)}</div><div class="sub">kg input</div></div>
-        <div class="stat-card"><div class="label">Total Output</div><div class="value">${fmt(totalOut)}</div><div class="sub">kg (good + rejected)</div></div>
-        <div class="stat-card"><div class="label">Overall Yield</div><div class="value accent">${overallYield.toFixed(1)}%</div><div class="sub">output ÷ raw material</div></div>
-        <div class="stat-card"><div class="label">Shifts Logged</div><div class="value">${list.length}</div><div class="sub">${monthLabel(ym)}</div></div>
+        <div class="stat-card"><div class="label">Total Batch Weight</div><div class="value">${fmt(totalBatchWeight)}</div><div class="sub">kg</div></div>
+        <div class="stat-card"><div class="label">Total Yield Weight</div><div class="value">${fmt(totalYieldWeight)}</div><div class="sub">kg</div></div>
+        <div class="stat-card"><div class="label">Overall Yield</div><div class="value accent">${overallYield.toFixed(1)}%</div><div class="sub">yield ÷ batch weight</div></div>
+        <div class="stat-card"><div class="label">Batches Logged</div><div class="value">${batchList.length}</div><div class="sub">${monthLabel(ym)}</div></div>
       </div>
-      <div class="panel-title" style="margin-top:18px;">B. Raw Material Consumption by Variant</div>
-      ${hbarTable(rawByVariant, 'kg')}
+      <div class="panel-title" style="margin-top:16px;">B. Raw Material Consumption by Variant (batch weight)</div>
+      ${hbarTable(rawByVariant,'kg')}
     </div>
 
     <div class="panel">
-      <h3 style="font-size:16px;margin-bottom:14px;"><span class="section-num">2.</span>Finished Product Performance Review</h3>
+      <h3 style="font-size:15px;margin-bottom:12px;"><span class="section-num">2.</span>Finished Product Performance Review</h3>
       <div class="panel-title">A. Production Output by Variant (kg good output)</div>
-      ${hbarTable(outputByVariant, 'kg')}
-      <div class="panel-title" style="margin-top:18px;">B. Average Production Feedrate by Variant (ton/hr)</div>
-      ${hbarTable(feedrateByVariant, 't/hr', true)}
-
-      <div class="panel-title" style="margin-top:18px;">C. Quality Issues &amp; Root Cause Analysis</div>
-      <table>
-        <thead><tr><th>Date</th><th>Shift</th><th>Line</th><th>Variant</th><th>Issue</th><th class="num">Qty (kg)</th><th>Root Cause</th></tr></thead>
-        <tbody>
-          ${allIssues.length ? allIssues.map(q=>`<tr><td>${q.date}</td><td>${q.shift}</td><td>${esc(q.line)}</td><td>${esc(q.variant)}</td><td>${esc(q.issue)}</td><td class="num">${fmt(q.qty)}</td><td>${esc(q.rootCause)}</td></tr>`).join('') : `<tr><td colspan="7" class="no-data">No quality issues logged.</td></tr>`}
-        </tbody>
+      ${hbarTable(outputByVariant,'kg')}
+      <div class="panel-title" style="margin-top:16px;">B. Average Production Feedrate by Variant (ton/hr)</div>
+      ${hbarTable(feedrateByVariant,'t/hr',true)}
+      <div class="panel-title" style="margin-top:16px;">C. Quality Issues &amp; Root Cause Analysis</div>
+      <table><thead><tr><th>Date</th><th>Shift</th><th>Line</th><th>Variant</th><th>Issue</th><th class="num">Qty (kg)</th><th>Root Cause</th></tr></thead>
+        <tbody>${allIssues.length ? allIssues.map(q=>`<tr><td>${q.date}</td><td>${q.shift}</td><td>${esc(q.line)}</td><td>${esc(q.variant)}</td><td>${esc(q.issue)}</td><td class="num">${fmt(q.qty)}</td><td>${esc(q.rootCause)}</td></tr>`).join('') : `<tr><td colspan="7" class="no-data">No quality issues logged.</td></tr>`}</tbody>
       </table>
-
-      <div class="panel-title" style="margin-top:18px;">D. Corrective Actions and Effectiveness</div>
-      <table>
-        <thead><tr><th>Date</th><th>Issue</th><th>Corrective Action</th><th>Effectiveness</th></tr></thead>
-        <tbody>
-          ${allIssues.length ? allIssues.map(q=>`<tr><td>${q.date}</td><td>${esc(q.issue)}</td><td>${esc(q.action)}</td><td>${effBadge(q.effectiveness)}</td></tr>`).join('') : `<tr><td colspan="4" class="no-data">No corrective actions logged.</td></tr>`}
-        </tbody>
+      <div class="panel-title" style="margin-top:16px;">D. Corrective Actions and Effectiveness</div>
+      <table><thead><tr><th>Date</th><th>Issue</th><th>Corrective Action</th><th>Effectiveness</th></tr></thead>
+        <tbody>${allIssues.length ? allIssues.map(q=>`<tr><td>${q.date}</td><td>${esc(q.issue)}</td><td>${esc(q.action)}</td><td><span class="badge ${q.effectiveness==='Effective'?'badge-good':q.effectiveness==='Partially Effective'?'badge-mid':q.effectiveness==='Not Effective'?'badge-bad':'badge-dim'}">${q.effectiveness}</span></td></tr>`).join('') : `<tr><td colspan="4" class="no-data">No corrective actions logged.</td></tr>`}</tbody>
       </table>
-
-      <div class="panel-title" style="margin-top:18px;">E. Total Finished Product Rejections</div>
+      <div class="panel-title" style="margin-top:16px;">E. Total Finished Product Rejections</div>
       <div class="stat-grid">
         <div class="stat-card"><div class="label">Total Rejected</div><div class="value" style="color:var(--bad)">${fmt(totalRejected)}</div><div class="sub">kg this month</div></div>
-        <div class="stat-card"><div class="label">Rejection Rate</div><div class="value">${totalOut>0?(totalRejected/totalOut*100).toFixed(1):'0'}%</div><div class="sub">of total output</div></div>
+        <div class="stat-card"><div class="label">Rejection Rate</div><div class="value">${totalOutputAll>0?(totalRejected/totalOutputAll*100).toFixed(1):'0'}%</div><div class="sub">of total output</div></div>
       </div>
-      ${hbarTable(rejectByVariant, 'kg')}
+      ${hbarTable(rejectByVariant,'kg')}
     </div>
 
     <div class="panel">
-      <h3 style="font-size:16px;margin-bottom:14px;"><span class="section-num">3.</span>Line Performance and Efficiency Analysis</h3>
-      <div class="panel-title">Daily Good Output — All Scoped Lines</div>
-      <div class="bars">${bars}</div>
-      <div class="bar-labels">${labels}</div>
-      ${linePerf.length ? linePerf.map(lp=>`
-        <div class="sub-block" style="margin-top:18px;">
-          <div class="sub-block-title" style="font-size:12px;color:var(--text);">${esc(lp.line.name)} — ${esc(lp.line.type)} <span style="color:var(--text-dim2);font-weight:normal;">(${lp.count} shifts)</span></div>
-          <div class="panel-title" style="margin-top:6px;">A. Specific Mechanical Energy (SME)</div>
-          <div class="stat-grid" style="grid-template-columns:repeat(1,220px);margin-bottom:10px;">
+      <h3 style="font-size:15px;margin-bottom:12px;"><span class="section-num">3.</span>Line Performance and Efficiency Analysis</h3>
+      <div class="panel-title">Daily Good Output — Scoped Lines</div>
+      <div style="display:flex;align-items:flex-end;gap:3px;height:150px;border-bottom:1px solid var(--line);">${bars}</div>
+      <div style="display:flex;gap:3px;margin-top:5px;">${labels}</div>
+      ${linePerf.length ? linePerf.map(lp=>{
+        const oc = oeeClass(lp.oee);
+        return `<div class="sub-block" style="margin-top:16px;">
+          <div style="font-size:12px;color:var(--text);font-family:'JetBrains Mono';margin-bottom:8px;">${esc(lp.line.name)} — ${esc(lp.line.type)} <span style="color:var(--text-dim2);">(${lp.count} shifts)</span></div>
+          <div class="stat-grid" style="grid-template-columns:repeat(1,200px);margin-bottom:10px;">
             <div class="stat-card"><div class="label">Avg SME</div><div class="value accent">${lp.sme>0?lp.sme.toFixed(2):'—'}</div><div class="sub">kWh / ton</div></div>
           </div>
-          <div class="panel-title">B–E. Availability, Performance, Quality &amp; OEE</div>
-          <div class="gauge-row" style="grid-template-columns:repeat(4,1fr);">
+          <div class="gauge-row">
             ${gaugeCard('Availability', lp.availability)}
             ${gaugeCard('Performance', lp.performance)}
             ${gaugeCard('Quality Rate', lp.quality)}
-            ${gaugeCard('OEE', lp.oee, true)}
+            ${gaugeCard('OEE', lp.oee)}
           </div>
-        </div>
-      `).join('') : `<div class="no-data">No line data for this scope.</div>`}
+          <div style="margin-top:8px;text-align:center;"><span class="badge ${oc.cls}">${oc.label} (${lp.oee.toFixed(1)}%)</span></div>
+        </div>`;
+      }).join('') : `<div class="no-data">No line data for this scope.</div>`}
+      <div class="calc-note" style="margin-top:12px;">OEE bands: ≥85% World Class · 70–84% Good · 60–69% Average · &lt;60% Bad.</div>
     </div>
 
     <div class="panel">
-      <h3 style="font-size:16px;margin-bottom:14px;"><span class="section-num">4.</span>Die Performance and Service Life Analysis</h3>
-      <div class="stat-grid" style="margin-bottom:16px;">
+      <h3 style="font-size:15px;margin-bottom:12px;"><span class="section-num">4.</span>Die Performance and Service Life Analysis</h3>
+      <div class="stat-grid" style="margin-bottom:14px;">
         <div class="stat-card"><div class="label">Avg Service Life</div><div class="value accent">${avgLifeHours?fmt(avgLifeHours,1):'—'}</div><div class="sub">hours (removed dies)</div></div>
         <div class="stat-card"><div class="label">Avg Throughput Life</div><div class="value">${avgLifeTons?fmt(avgLifeTons,1):'—'}</div><div class="sub">tons before change</div></div>
         <div class="stat-card"><div class="label">Dies On Record</div><div class="value">${dieList.length}</div><div class="sub">all-time</div></div>
         <div class="stat-card"><div class="label">Currently Active</div><div class="value">${dieList.filter(d=>d.status==='Active').length}</div><div class="sub">in service</div></div>
       </div>
-      <table>
-        <thead><tr><th>Line</th><th>Die</th><th>Installed</th><th>Status</th><th>Removed</th><th class="num">Running Hrs</th><th class="num">Throughput (t)</th><th>Reason</th></tr></thead>
-        <tbody>
-          ${dieList.length ? dieList.map(d=>`<tr><td>${esc(lineName(plant,d.lineId))}</td><td>${esc(d.dieId)}</td><td>${d.installDate}</td><td>${d.status==='Active'?'<span class="badge badge-info">Active</span>':'<span class="badge badge-dim">Removed</span>'}</td><td>${d.removalDate||'—'}</td><td class="num">${d.runningHours?fmt(d.runningHours,1):'—'}</td><td class="num">${d.throughputTons?fmt(d.throughputTons,1):'—'}</td><td>${d.reason||'—'}</td></tr>`).join('') : `<tr><td colspan="8" class="no-data">No die records yet.</td></tr>`}
-        </tbody>
+      <table><thead><tr><th>Line</th><th>Die</th><th>Installed</th><th>Status</th><th>Removed</th><th class="num">Running Hrs</th><th class="num">Throughput (t)</th><th>Reason</th></tr></thead>
+        <tbody>${dieList.length ? dieList.map(d=>`<tr><td>${esc(lineName(plant,d.lineId))}</td><td>${esc(d.dieId)}</td><td>${d.installDate}</td><td>${d.status==='Active'?'<span class="badge badge-info">Active</span>':'<span class="badge badge-dim">Removed</span>'}</td><td>${d.removalDate||'—'}</td><td class="num">${d.runningHours?fmt(d.runningHours,1):'—'}</td><td class="num">${d.throughputTons?fmt(d.throughputTons,1):'—'}</td><td>${d.reason||'—'}</td></tr>`).join('') : `<tr><td colspan="8" class="no-data">No die records yet.</td></tr>`}</tbody>
       </table>
-    </div>
-  `;
+    </div>`;
 }
-
-function variantName(plant, id){ const v=(plant.variants||[]).find(v=>v.id===id); return v?v.name:'Unassigned'; }
-function groupSum(list, keyFn, valFn){
-  const map = {};
-  list.forEach(item=>{ const k=keyFn(item); map[k]=(map[k]||0)+valFn(item); });
-  return map;
-}
-function groupAvg(list, keyFn, valFn){
-  const sums={}, counts={};
-  list.forEach(item=>{ const k=keyFn(item); sums[k]=(sums[k]||0)+valFn(item); counts[k]=(counts[k]||0)+1; });
-  const out={}; Object.keys(sums).forEach(k=> out[k]=sums[k]/counts[k]);
-  return out;
-}
-function avg(arr){ return arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0; }
-
-function hbarTable(dataObj, unit, decimals){
-  const entries = Object.entries(dataObj);
-  if(!entries.length) return `<div class="no-data">No data available.</div>`;
-  const max = Math.max(...entries.map(e=>e[1]), 0.0001);
-  return entries.map(([k,v])=>`
-    <div class="hbar-row">
-      <div class="hbar-label">${esc(k)}</div>
-      <div class="hbar-track"><div class="hbar-fill" style="width:${(v/max*100).toFixed(1)}%"></div></div>
-      <div class="hbar-val">${decimals?v.toFixed(2):fmt(v)} ${unit}</div>
-    </div>`).join('');
-}
-
-function effBadge(eff){
-  const cls = eff==='Effective' ? 'badge-good' : eff==='Partially Effective' ? 'badge-mid' : eff==='Not Effective' ? 'badge-bad' : 'badge-dim';
-  return `<span class="badge ${cls}">${eff}</span>`;
-}
-
-function gaugeCard(title, value, big){
-  const color = value>=85?'var(--good)':value>=60?'var(--amber)':'var(--bad)';
-  return `<div class="gauge-card">
-    <div class="gauge-title">${title}</div>
-    ${gaugeSvg(Math.min(100,value), color)}
-    <div class="gauge-val" style="color:${color}">${value.toFixed(1)}%</div>
-  </div>`;
-}
-function gaugeSvg(pct, color){
-  const r=60, cx=75, cy=75;
-  const toXY=(ang)=>{ const rad=ang*Math.PI/180; return [cx+r*Math.cos(rad), cy-r*Math.sin(rad)]; };
-  const [sx,sy]=toXY(180); const [ex,ey]=toXY(180-(pct/100)*180);
-  const largeArc = pct>50?1:0;
-  return `<svg viewBox="0 0 150 82" width="150" height="82">
-    <path d="M ${cx-r} ${cy} A ${r} ${r} 0 0 1 ${cx+r} ${cy}" fill="none" stroke="#3A3F45" stroke-width="12" stroke-linecap="round"/>
-    <path d="M ${sx} ${sy} A ${r} ${r} 0 ${largeArc} 1 ${ex} ${ey}" fill="none" stroke="${color}" stroke-width="12" stroke-linecap="round"/>
-  </svg>`;
-}
-function monthLabel(ym){ const [y,m]=ym.split('-'); return new Date(parseInt(y),parseInt(m)-1,1).toLocaleDateString(undefined,{month:'long',year:'numeric'}).toUpperCase(); }
-
-loadAll();
 </script>
 </body>
 </html>
