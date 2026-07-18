@@ -128,6 +128,12 @@
 
   .section-num{color:var(--amber);font-family:'JetBrains Mono';margin-right:6px;}
   .no-data{color:var(--text-dim2);text-align:center;padding:24px;font-family:'JetBrains Mono';font-size:12px;}
+  .line-group{margin-bottom:18px;}
+  .line-group:last-child{margin-bottom:0;}
+  .line-group-header{display:flex;align-items:baseline;gap:10px;padding:8px 12px;background:var(--panel-3);border:1px solid var(--line);border-radius:var(--radius) var(--radius) 0 0;}
+  .line-group-header .lg-name{font-family:'Oswald';font-size:13px;letter-spacing:0.5px;color:var(--text);text-transform:uppercase;}
+  .line-group-header .lg-type{font-family:'JetBrains Mono';font-size:9.5px;color:var(--text-dim2);text-transform:uppercase;letter-spacing:1px;}
+  .line-group table{margin-top:-1px;}
 
   .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;}
   .modal{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:20px;width:460px;max-height:86vh;overflow-y:auto;}
@@ -200,12 +206,12 @@
    → General → Your apps → SDK setup and configuration).
    ============================================================ */
 const firebaseConfig = {
-  apiKey: "AIzaSyCvFCp33X18zRx7DWxZ-k2EVo_K8ItFuS8",
-  authDomain: "productionr-2ca22.firebaseapp.com",
-  projectId: "productionr-2ca22",
-  storageBucket: "productionr-2ca22.firebasestorage.app",
-  messagingSenderId: "550974432860",
-  appId: "1:550974432860:web:a003243c7ae9042ee0e899"
+  apiKey: "AIzaSyB_tgkmCtOKSZxxrH2zpMJROcg3ICvWMm8",
+  authDomain: "plant-operation.firebaseapp.com",
+  projectId: "plant-operation",
+  storageBucket: "plant-operation.firebasestorage.app",
+  messagingSenderId: "63714104008",
+  appId: "1:63714104008:web:8bdbcc4938b528e0fdcbfd"
 };
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
@@ -596,6 +602,13 @@ function monthPrefix(){ return new Date().toISOString().slice(0,7); }
 function avg(arr){ return arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0; }
 function groupSum(list, keyFn, valFn){ const m={}; list.forEach(i=>{const k=keyFn(i); m[k]=(m[k]||0)+valFn(i);}); return m; }
 function groupAvg(list, keyFn, valFn){ const s={},c={}; list.forEach(i=>{const k=keyFn(i); s[k]=(s[k]||0)+valFn(i); c[k]=(c[k]||0)+1;}); const o={}; Object.keys(s).forEach(k=>o[k]=s[k]/c[k]); return o; }
+function groupByLine(list, lines){
+  // Groups records by line, newest-saved-first within each group (by createdAt).
+  return (lines||[]).map(line=>{
+    const items = list.filter(r=>r.lineId===line.id).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+    return {line, items};
+  });
+}
 function hbarTable(dataObj, unit, decimals){
   const entries = Object.entries(dataObj);
   if(!entries.length) return `<div class="no-data">No data available.</div>`;
@@ -822,28 +835,32 @@ function renderShiftTab(plant){
 function renderShiftTable(plant){
   const wrap = document.getElementById('shiftTableWrap');
   if(!wrap) return;
-  const list = [...shiftsCache].sort((a,b)=>(b.date+b.shiftLabel).localeCompare(a.date+a.shiftLabel));
-  wrap.innerHTML = `
-      <table>
-        <thead><tr><th>Date</th><th>Shift</th><th>Line</th><th>Variant</th><th class="num">Bags</th><th class="num">Good Kg</th><th class="num">Avail</th><th class="num">Perf</th><th class="num">Qual</th><th class="num">OEE</th><th class="num">SME</th><th></th></tr></thead>
-        <tbody>
-          ${list.length ? list.map(s=>{
-            const m = shiftMetrics(s, plant);
-            const oc = oeeClass(m.oee);
-            return `<tr class="clickable" onclick="showShiftDetail('${s.id}')">
-              <td>${s.date}</td><td>${s.shiftLabel}</td><td>${esc(lineName(plant,s.lineId))}</td><td>${m.variant?esc(m.variant.name):'—'}</td>
-              <td class="num">${fmt(m.actualOutputBags)}</td>
-              <td class="num">${fmt(m.goodOutputKg)}</td>
-              <td class="num">${m.availability.toFixed(0)}%</td>
-              <td class="num">${m.performance.toFixed(0)}%</td>
-              <td class="num">${m.qualityRate.toFixed(0)}%</td>
-              <td class="num"><span class="badge ${oc.cls}">${m.oee.toFixed(0)}%</span></td>
-              <td class="num">${m.sme>0?m.sme.toFixed(2):'—'}</td>
-              <td class="num" onclick="event.stopPropagation()"><button class="del-btn" onclick="deleteShift('${plant.id}','${s.id}')">✕</button></td>
-            </tr>`;
-          }).join('') : `<tr><td colspan="12" class="no-data">No shifts logged yet.</td></tr>`}
-        </tbody>
-      </table>`;
+  const groups = groupByLine(shiftsCache, plant.lines||[]);
+  wrap.innerHTML = groups.length ? groups.map(g=>{
+    const rows = g.items.map(s=>{
+      const m = shiftMetrics(s, plant);
+      const oc = oeeClass(m.oee);
+      return `<tr class="clickable" onclick="showShiftDetail('${s.id}')">
+        <td>${s.date}</td><td>${s.shiftLabel}</td><td>${m.variant?esc(m.variant.name):'—'}</td>
+        <td class="num">${fmt(m.actualOutputBags)}</td>
+        <td class="num">${fmt(m.goodOutputKg)}</td>
+        <td class="num">${m.availability.toFixed(0)}%</td>
+        <td class="num">${m.performance.toFixed(0)}%</td>
+        <td class="num">${m.qualityRate.toFixed(0)}%</td>
+        <td class="num"><span class="badge ${oc.cls}">${m.oee.toFixed(0)}%</span></td>
+        <td class="num">${m.sme>0?m.sme.toFixed(2):'—'}</td>
+        <td class="num" onclick="event.stopPropagation()"><button class="del-btn" onclick="deleteShift('${plant.id}','${s.id}')">✕</button></td>
+      </tr>`;
+    }).join('');
+    return `
+      <div class="line-group">
+        <div class="line-group-header"><span class="lg-name">${esc(g.line.name)}</span><span class="lg-type">${esc(g.line.type)}</span></div>
+        <table>
+          <thead><tr><th>Date</th><th>Shift</th><th>Variant</th><th class="num">Bags</th><th class="num">Good Kg</th><th class="num">Avail</th><th class="num">Perf</th><th class="num">Qual</th><th class="num">OEE</th><th class="num">SME</th><th></th></tr></thead>
+          <tbody>${g.items.length ? rows : `<tr><td colspan="11" class="no-data">No shifts logged for this line yet.</td></tr>`}</tbody>
+        </table>
+      </div>`;
+  }).join('') : `<div class="no-data">No lines set up for this facility.</div>`;
 }
 function renderQualityRows(){
   const wrap = document.getElementById('qualityRows');
@@ -908,7 +925,8 @@ async function submitShift(plantId){
     motorLoadAmp: parseFloat(g('s_amp').value)||0, voltage: parseFloat(g('s_volt').value)||0,
     powerFactor: parseFloat(g('s_pf').value)||0, efficiency: parseFloat(g('s_eff').value)||0,
     feedrateTonHr: parseFloat(g('s_feedrate').value)||0,
-    quality: draftQuality.filter(q=>q.issue.trim()!=='')
+    quality: draftQuality.filter(q=>q.issue.trim()!==''),
+    createdAt: Date.now()
   };
   await db.collection('plants').doc(plantId).collection('shifts').add(record);
   lastShiftDate = date;
@@ -1018,22 +1036,26 @@ function renderBatchTab(plant){
 function renderBatchTable(plant){
   const wrap = document.getElementById('batchTableWrap');
   if(!wrap) return;
-  const list = [...batchesCache].sort((a,b)=>b.date.localeCompare(a.date));
-  wrap.innerHTML = `
-      <table>
-        <thead><tr><th>Date</th><th>Line</th><th>Variant</th><th class="num">Batch Wt</th><th class="num">Yield Wt</th><th class="num">Reject</th><th class="num">FP Output</th><th class="num">Yield %</th><th class="num">Recovery %</th><th></th></tr></thead>
-        <tbody>
-          ${list.length ? list.map(b=>{
-            const bm = batchMetrics(b);
-            return `<tr>
-              <td>${b.date}</td><td>${esc(lineName(plant,b.lineId))}</td><td>${esc(variantName(plant,b.variantId))}</td>
-              <td class="num">${fmt(b.batchWeight)}</td><td class="num">${fmt(b.yieldWeight)}</td><td class="num">${fmt(b.reject)}</td><td class="num">${fmt(b.finishedOutput)}</td>
-              <td class="num">${bm.yieldPct.toFixed(1)}%</td><td class="num">${bm.recoveryPct.toFixed(1)}%</td>
-              <td class="num"><button class="del-btn" onclick="deleteBatch('${plant.id}','${b.id}')">✕</button></td>
-            </tr>`;
-          }).join('') : `<tr><td colspan="10" class="no-data">No batches logged yet.</td></tr>`}
-        </tbody>
-      </table>`;
+  const groups = groupByLine(batchesCache, plant.lines||[]);
+  wrap.innerHTML = groups.length ? groups.map(g=>{
+    const rows = g.items.map(b=>{
+      const bm = batchMetrics(b);
+      return `<tr>
+        <td>${b.date}</td><td>${esc(variantName(plant,b.variantId))}</td>
+        <td class="num">${fmt(b.batchWeight)}</td><td class="num">${fmt(b.yieldWeight)}</td><td class="num">${fmt(b.reject)}</td><td class="num">${fmt(b.finishedOutput)}</td>
+        <td class="num">${bm.yieldPct.toFixed(1)}%</td><td class="num">${bm.recoveryPct.toFixed(1)}%</td>
+        <td class="num"><button class="del-btn" onclick="deleteBatch('${plant.id}','${b.id}')">✕</button></td>
+      </tr>`;
+    }).join('');
+    return `
+      <div class="line-group">
+        <div class="line-group-header"><span class="lg-name">${esc(g.line.name)}</span><span class="lg-type">${esc(g.line.type)}</span></div>
+        <table>
+          <thead><tr><th>Date</th><th>Variant</th><th class="num">Batch Wt</th><th class="num">Yield Wt</th><th class="num">Reject</th><th class="num">FP Output</th><th class="num">Yield %</th><th class="num">Recovery %</th><th></th></tr></thead>
+          <tbody>${g.items.length ? rows : `<tr><td colspan="9" class="no-data">No batches logged for this line yet.</td></tr>`}</tbody>
+        </table>
+      </div>`;
+  }).join('') : `<div class="no-data">No lines set up for this facility.</div>`;
 }
 async function submitBatch(plantId){
   const g = id=>document.getElementById(id);
@@ -1051,7 +1073,8 @@ async function submitBatch(plantId){
     batchWeight: parseFloat(g('b_batchWeight').value)||0,
     yieldWeight: parseFloat(g('b_yieldWeight').value)||0,
     reject: parseFloat(g('b_reject').value)||0,
-    finishedOutput: parseFloat(g('b_finished').value)||0
+    finishedOutput: parseFloat(g('b_finished').value)||0,
+    createdAt: Date.now()
   };
   await db.collection('plants').doc(plantId).collection('batches').add(record);
   mainRenderedKey = null;
@@ -1099,19 +1122,24 @@ function renderDieTab(plant){
 function renderDieTable(plant){
   const wrap = document.getElementById('dieTableWrap');
   if(!wrap) return;
-  const list = [...diesCache].sort((a,b)=>b.installDate.localeCompare(a.installDate));
-  wrap.innerHTML = `
-      <table>
-        <thead><tr><th>Line</th><th>Die</th><th>Installed</th><th>Status</th><th>Removed</th><th class="num">Running Hrs</th><th class="num">Throughput (t)</th><th>Reason</th><th></th></tr></thead>
-        <tbody>
-          ${list.length ? list.map(d=>`<tr>
-            <td>${esc(lineName(plant,d.lineId))}</td><td>${esc(d.dieId)}</td><td>${d.installDate}</td>
-            <td>${d.status==='Active'?'<span class="badge badge-info">Active</span>':'<span class="badge badge-dim">Removed</span>'}</td>
-            <td>${d.removalDate||'—'}</td><td class="num">${d.runningHours?fmt(d.runningHours,1):'—'}</td><td class="num">${d.throughputTons?fmt(d.throughputTons,1):'—'}</td>
-            <td>${d.reason||'—'}</td><td class="num"><button class="del-btn" onclick="deleteDie('${plant.id}','${d.id}')">✕</button></td>
-          </tr>`).join('') : `<tr><td colspan="9" class="no-data">No die records yet.</td></tr>`}
-        </tbody>
-      </table>`;
+  const dieLines = (plant.lines||[]).filter(l=>l.type!=='Crumbler');
+  const groups = groupByLine(diesCache, dieLines);
+  wrap.innerHTML = groups.length ? groups.map(g=>{
+    const rows = g.items.map(d=>`<tr>
+        <td>${esc(d.dieId)}</td><td>${d.installDate}</td>
+        <td>${d.status==='Active'?'<span class="badge badge-info">Active</span>':'<span class="badge badge-dim">Removed</span>'}</td>
+        <td>${d.removalDate||'—'}</td><td class="num">${d.runningHours?fmt(d.runningHours,1):'—'}</td><td class="num">${d.throughputTons?fmt(d.throughputTons,1):'—'}</td>
+        <td>${d.reason||'—'}</td><td class="num"><button class="del-btn" onclick="deleteDie('${plant.id}','${d.id}')">✕</button></td>
+      </tr>`).join('');
+    return `
+      <div class="line-group">
+        <div class="line-group-header"><span class="lg-name">${esc(g.line.name)}</span><span class="lg-type">${esc(g.line.type)}</span></div>
+        <table>
+          <thead><tr><th>Die</th><th>Installed</th><th>Status</th><th>Removed</th><th class="num">Running Hrs</th><th class="num">Throughput (t)</th><th>Reason</th><th></th></tr></thead>
+          <tbody>${g.items.length ? rows : `<tr><td colspan="8" class="no-data">No die records for this line yet.</td></tr>`}</tbody>
+        </table>
+      </div>`;
+  }).join('') : `<div class="no-data">No extruder or pellet mill lines set up.</div>`;
 }
 async function submitDie(plantId){
   const g = id=>document.getElementById(id);
@@ -1132,7 +1160,8 @@ async function submitDie(plantId){
     reason: status==='Removed'?g('d_reason').value:'',
     runningHours: parseFloat(g('d_hours').value)||0,
     throughputTons: parseFloat(g('d_throughput').value)||0,
-    notes: g('d_notes').value
+    notes: g('d_notes').value,
+    createdAt: Date.now()
   };
   await db.collection('plants').doc(plantId).collection('dies').add(record);
   mainRenderedKey = null;
