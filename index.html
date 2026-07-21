@@ -206,12 +206,12 @@
    → General → Your apps → SDK setup and configuration).
    ============================================================ */
 const firebaseConfig = {
-  apiKey: "AIzaSyCvFCp33X18zRx7DWxZ-k2EVo_K8ItFuS8",
-  authDomain: "productionr-2ca22.firebaseapp.com",
-  projectId: "productionr-2ca22",
-  storageBucket: "productionr-2ca22.firebasestorage.app",
-  messagingSenderId: "550974432860",
-  appId: "1:550974432860:web:a003243c7ae9042ee0e899"
+  apiKey: "AIzaSyB_tgkmCtOKSZxxrH2zpMJROcg3ICvWMm8",
+  authDomain: "plant-operation.firebaseapp.com",
+  projectId: "plant-operation",
+  storageBucket: "plant-operation.firebasestorage.app",
+  messagingSenderId: "63714104008",
+  appId: "1:63714104008:web:8bdbcc4938b528e0fdcbfd"
 };
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
@@ -592,11 +592,17 @@ function shiftMetrics(s, plant){
   const oee = (availability/100)*(performance/100)*(qualityRate/100)*100;
   return {variant, bagWeight, excellentBags, goodBags, projectBags, rejectBags, actualOutputBags, goodOutputKg, totalOutputKg, rejectKg, qualityRate, runHours, availability, power, sme, ict, performance, oee};
 }
-function batchMetrics(b){
-  const yieldPct = b.batchWeight>0 ? (b.yieldWeight/b.batchWeight*100) : 0;
-  const rejectPct = b.batchWeight>0 ? (b.reject/b.batchWeight*100) : 0;
-  const recoveryPct = b.batchWeight>0 ? (b.finishedOutput/b.batchWeight*100) : 0;
-  return {yieldPct, rejectPct, recoveryPct};
+function batchMetrics(b, plant){
+  const variant = variantObj(plant, b.variantId);
+  const bagWeight = variant ? (variant.bagWeight||0) : 0;
+  // Backward compatible: records saved before "Fines Weight" existed keep their originally-entered Yield Weight.
+  const yieldWeight = (b.finesWeight!=null) ? Math.max(0,(b.batchWeight||0)-(b.finesWeight||0)) : (b.yieldWeight||0);
+  // Backward compatible: records saved before "Reject (bags)" existed keep their originally-entered kg value.
+  const rejectKg = (b.rejectBags!=null) ? (b.rejectBags||0)*bagWeight : (b.reject||0);
+  const yieldPct = b.batchWeight>0 ? (yieldWeight/b.batchWeight*100) : 0;
+  const rejectPct = b.batchWeight>0 ? (rejectKg/b.batchWeight*100) : 0;
+  const recoveryPct = b.batchWeight>0 ? ((b.finishedOutput||0)/b.batchWeight*100) : 0;
+  return {yieldWeight, rejectKg, yieldPct, rejectPct, recoveryPct};
 }
 function monthPrefix(){ return new Date().toISOString().slice(0,7); }
 function avg(arr){ return arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0; }
@@ -683,7 +689,7 @@ function renderMain(){
     // typing isn't wiped out by a live update arriving from Firestore.
     if(activeTab==='shift'){ refreshDropdown('s_line', plant.lines); refreshDropdown('s_variant', plant.variants); renderShiftTable(plant); }
     else if(activeTab==='batch'){ refreshDropdown('b_line', plant.lines); refreshDropdown('b_variant', plant.variants); renderBatchTable(plant); }
-    else if(activeTab==='die'){ refreshDropdown('d_line', (plant.lines||[]).filter(l=>l.type!=='Crumbler')); renderDieTable(plant); }
+    else if(activeTab==='die'){ refreshDropdown('d_line', (plant.lines||[]).filter(l=>l.type!=='Crumbler')); renderDieSummary(plant); renderDieTable(plant); }
     else if(activeTab==='report'){
       const mSel=document.getElementById('reportMonth'), lSel=document.getElementById('reportLine');
       if(mSel && lSel) buildReport(plant.id, mSel.value, lSel.value);
@@ -938,17 +944,31 @@ async function submitShift(plantId){
 async function deleteShift(plantId, shiftId){
   await db.collection('plants').doc(plantId).collection('shifts').doc(shiftId).delete();
 }
-function showShiftDetail(shiftId){
+const EDITABLE_SHIFT_FIELDS = [
+  {id:'cylSteam', label:'Cylinder Steam'}, {id:'cylWater', label:'Cylinder Water'},
+  {id:'extSteam', label:'Extruder Steam'}, {id:'extWater', label:'Extruder Water'},
+  {id:'barrel1', label:'Barrel T-1'}, {id:'barrel2', label:'Barrel T-2'}, {id:'barrel3', label:'Barrel T-3'},
+  {id:'bedTop', label:'Bed Speed Top'}, {id:'bedBottom', label:'Bed Speed Bottom'},
+  {id:'moisture', label:'Moisture (%)'}, {id:'floatEff', label:'Floating Eff (%)'}, {id:'bulkDensity', label:'Bulk Density'}
+];
+function detailOrField(label, value, editId, editMode){
+  if(editMode) return `<div class="field"><label>${label}</label><input type="number" step="any" id="${editId}" value="${value!=null?value:0}"></div>`;
+  return `<div class="detail-item"><div class="dl">${label}</div><div class="dv">${value}</div></div>`;
+}
+function showShiftDetail(shiftId, editMode){
   const plant = currentPlant();
   const s = shiftsCache.find(x=>x.id===shiftId);
   if(!s) return;
   const m = shiftMetrics(s, plant);
   const oc = oeeClass(m.oee);
-  const dryerItems = Object.keys(s.dryer||{}).map(k=>`<div class="detail-item"><div class="dl">${k.toUpperCase()}</div><div class="dv">${s.dryer[k]}</div></div>`).join('');
+  const dryer = s.dryer||{};
+  const dryerItems = editMode
+    ? Array.from({length:DRYER_ZONES},(_,i)=>i+1).map(i=>detailOrField('T'+i, dryer['t'+i], 'edit_dryer_t'+i, true)).join('')
+    : Object.keys(dryer).map(k=>`<div class="detail-item"><div class="dl">${k.toUpperCase()}</div><div class="dv">${dryer[k]}</div></div>`).join('');
   document.getElementById('modalRoot').innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
       <div class="modal wide">
-        <h3>${s.date} — ${s.shiftLabel} Shift — ${esc(lineName(plant,s.lineId))}</h3>
+        <h3>${s.date} — ${s.shiftLabel} Shift — ${esc(lineName(plant,s.lineId))} ${editMode?'<span style=\"color:var(--amber);font-size:12px;\">(Editing)</span>':''}</h3>
         <div class="group-title">Basic Info</div>
         <div class="detail-grid">
           <div class="detail-item"><div class="dl">Recipe ID</div><div class="dv">${esc(s.recipeId||'—')}</div></div>
@@ -966,25 +986,25 @@ function showShiftDetail(shiftId){
           <div class="detail-item"><div class="dl">Actual Output</div><div class="dv">${fmt(m.actualOutputBags)} bags</div></div>
           <div class="detail-item"><div class="dl">Good Output (Excellent+Good)</div><div class="dv">${fmt(m.goodOutputKg)} kg</div></div>
         </div>
-        <div class="group-title">Cylinder &amp; Extruder</div>
-        <div class="detail-grid">
-          <div class="detail-item"><div class="dl">Cylinder Steam</div><div class="dv">${s.cylSteam}</div></div>
-          <div class="detail-item"><div class="dl">Cylinder Water</div><div class="dv">${s.cylWater}</div></div>
-          <div class="detail-item"><div class="dl">Extruder Steam</div><div class="dv">${s.extSteam}</div></div>
-          <div class="detail-item"><div class="dl">Extruder Water</div><div class="dv">${s.extWater}</div></div>
-          <div class="detail-item"><div class="dl">Barrel T-1</div><div class="dv">${s.barrel1}</div></div>
-          <div class="detail-item"><div class="dl">Barrel T-2</div><div class="dv">${s.barrel2}</div></div>
-          <div class="detail-item"><div class="dl">Barrel T-3</div><div class="dv">${s.barrel3}</div></div>
+        <div class="group-title">Cylinder &amp; Extruder ${editMode?'<span style=\"color:var(--amber);\">— editable</span>':''}</div>
+        <div class="${editMode?'field-grid':'detail-grid'}">
+          ${detailOrField('Cylinder Steam', s.cylSteam, 'edit_cylSteam', editMode)}
+          ${detailOrField('Cylinder Water', s.cylWater, 'edit_cylWater', editMode)}
+          ${detailOrField('Extruder Steam', s.extSteam, 'edit_extSteam', editMode)}
+          ${detailOrField('Extruder Water', s.extWater, 'edit_extWater', editMode)}
+          ${detailOrField('Barrel T-1', s.barrel1, 'edit_barrel1', editMode)}
+          ${detailOrField('Barrel T-2', s.barrel2, 'edit_barrel2', editMode)}
+          ${detailOrField('Barrel T-3', s.barrel3, 'edit_barrel3', editMode)}
         </div>
-        <div class="group-title">Dryer Temperature (°C)</div>
-        <div class="detail-grid">${dryerItems}</div>
-        <div class="group-title">Bed Speed / Q.A.</div>
-        <div class="detail-grid">
-          <div class="detail-item"><div class="dl">Bed Speed Top</div><div class="dv">${s.bedTop} Hz</div></div>
-          <div class="detail-item"><div class="dl">Bed Speed Bottom</div><div class="dv">${s.bedBottom} Hz</div></div>
-          <div class="detail-item"><div class="dl">Moisture</div><div class="dv">${s.moisture}%</div></div>
-          <div class="detail-item"><div class="dl">Floating Eff</div><div class="dv">${s.floatEff}%</div></div>
-          <div class="detail-item"><div class="dl">Bulk Density</div><div class="dv">${s.bulkDensity}</div></div>
+        <div class="group-title">Dryer Temperature (°C) ${editMode?'<span style=\"color:var(--amber);\">— editable</span>':''}</div>
+        <div class="${editMode?'field-grid':'detail-grid'}">${dryerItems}</div>
+        <div class="group-title">Bed Speed / Q.A. ${editMode?'<span style=\"color:var(--amber);\">— editable</span>':''}</div>
+        <div class="${editMode?'field-grid':'detail-grid'}">
+          ${detailOrField('Bed Speed Top', s.bedTop, 'edit_bedTop', editMode)}
+          ${detailOrField('Bed Speed Bottom', s.bedBottom, 'edit_bedBottom', editMode)}
+          ${detailOrField('Moisture (%)', s.moisture, 'edit_moisture', editMode)}
+          ${detailOrField('Floating Eff (%)', s.floatEff, 'edit_floatEff', editMode)}
+          ${detailOrField('Bulk Density', s.bulkDensity, 'edit_bulkDensity', editMode)}
         </div>
         <div class="group-title">Power &amp; SME</div>
         <div class="detail-grid">
@@ -1005,9 +1025,27 @@ function showShiftDetail(shiftId){
           <div class="detail-item"><div class="dl">OEE</div><div class="dv"><span class="badge ${oc.cls}">${m.oee.toFixed(1)}% — ${oc.label}</span></div></div>
         </div>
         ${(s.quality&&s.quality.length) ? `<div class="group-title">Quality Issues</div>` + s.quality.map(q=>`<div class="sub-block"><b>${esc(q.issue)}</b> — ${fmt(q.qty)} kg<br><span style="color:var(--text-dim2);">Root cause: ${esc(q.rootCause)} · Action: ${esc(q.action)} · ${q.effectiveness}</span></div>`).join('') : ''}
-        <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Close</button></div>
+        <div class="modal-actions">
+          ${editMode
+            ? `<button class="btn ghost" onclick="showShiftDetail('${s.id}', false)">Cancel</button><button class="btn" onclick="saveShiftEdit('${plant.id}','${s.id}')">Save Changes</button>`
+            : `<button class="btn ghost" onclick="closeModal()">Close</button><button class="btn" onclick="showShiftDetail('${s.id}', true)">Edit Parameters</button>`}
+        </div>
       </div>
     </div>`;
+}
+async function saveShiftEdit(plantId, shiftId){
+  const v = id=>{ const el=document.getElementById(id); return el ? (parseFloat(el.value)||0) : 0; };
+  const dryer = {};
+  for(let i=1;i<=DRYER_ZONES;i++) dryer['t'+i] = v('edit_dryer_t'+i);
+  const updates = {
+    cylSteam:v('edit_cylSteam'), cylWater:v('edit_cylWater'), extSteam:v('edit_extSteam'), extWater:v('edit_extWater'),
+    barrel1:v('edit_barrel1'), barrel2:v('edit_barrel2'), barrel3:v('edit_barrel3'),
+    bedTop:v('edit_bedTop'), bedBottom:v('edit_bedBottom'),
+    moisture:v('edit_moisture'), floatEff:v('edit_floatEff'), bulkDensity:v('edit_bulkDensity'),
+    dryer
+  };
+  await db.collection('plants').doc(plantId).collection('shifts').doc(shiftId).update(updates);
+  closeModal();
 }
 
 /* ---------------- BATCH PERFORMANCE TAB ---------------- */
@@ -1018,13 +1056,15 @@ function renderBatchTab(plant){
       <div class="panel-title">New Batch Entry</div>
       <div class="field-grid">
         <div class="field"><label>Date</label><input type="date" id="b_date" value="${new Date().toISOString().slice(0,10)}"></div>
+        <div class="field"><label>Shift</label><select id="b_shift"><option>Day</option><option>Night</option></select></div>
         <div class="field"><label>Line</label><select id="b_line">${plant.lines.map(l=>`<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select></div>
         <div class="field"><label>Variant</label><select id="b_variant">${plant.variants.map(v=>`<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select></div>
         <div class="field"><label>Batch Weight (kg)</label><input type="number" id="b_batchWeight" placeholder="0"></div>
-        <div class="field"><label>Yield Weight (kg)</label><input type="number" id="b_yieldWeight" placeholder="0"></div>
-        <div class="field"><label>Reject (kg)</label><input type="number" id="b_reject" placeholder="0"></div>
+        <div class="field"><label>Fines Weight (kg)</label><input type="number" id="b_finesWeight" placeholder="0"></div>
+        <div class="field"><label>Reject (bags)</label><input type="number" id="b_rejectBags" placeholder="0"></div>
         <div class="field"><label>Finished Product Output (kg)</label><input type="number" id="b_finished" placeholder="0"></div>
       </div>
+      <div class="calc-note">Yield Weight = Batch Weight − Fines Weight. Yield % = Yield Weight ÷ Batch Weight. Recovery % = Finished Product Output ÷ Batch Weight.</div>
       <div style="margin-top:14px;"><button class="btn" onclick="submitBatch('${plant.id}')">Save Batch Entry</button></div>
     </div>
     <div class="panel">
@@ -1039,10 +1079,11 @@ function renderBatchTable(plant){
   const groups = groupByLine(batchesCache, plant.lines||[]);
   wrap.innerHTML = groups.length ? groups.map(g=>{
     const rows = g.items.map(b=>{
-      const bm = batchMetrics(b);
+      const bm = batchMetrics(b, plant);
       return `<tr>
-        <td>${b.date}</td><td>${esc(variantName(plant,b.variantId))}</td>
-        <td class="num">${fmt(b.batchWeight)}</td><td class="num">${fmt(b.yieldWeight)}</td><td class="num">${fmt(b.reject)}</td><td class="num">${fmt(b.finishedOutput)}</td>
+        <td>${b.date}</td><td>${esc(b.shiftLabel||'—')}</td><td>${esc(variantName(plant,b.variantId))}</td>
+        <td class="num">${fmt(b.batchWeight)}</td><td class="num">${fmt(b.finesWeight!=null?b.finesWeight:0)}</td><td class="num">${fmt(bm.yieldWeight)}</td>
+        <td class="num">${fmt(bm.rejectKg)}</td><td class="num">${fmt(b.finishedOutput)}</td>
         <td class="num">${bm.yieldPct.toFixed(1)}%</td><td class="num">${bm.recoveryPct.toFixed(1)}%</td>
         <td class="num"><button class="del-btn" onclick="deleteBatch('${plant.id}','${b.id}')">✕</button></td>
       </tr>`;
@@ -1051,8 +1092,8 @@ function renderBatchTable(plant){
       <div class="line-group">
         <div class="line-group-header"><span class="lg-name">${esc(g.line.name)}</span><span class="lg-type">${esc(g.line.type)}</span></div>
         <table>
-          <thead><tr><th>Date</th><th>Variant</th><th class="num">Batch Wt</th><th class="num">Yield Wt</th><th class="num">Reject</th><th class="num">FP Output</th><th class="num">Yield %</th><th class="num">Recovery %</th><th></th></tr></thead>
-          <tbody>${g.items.length ? rows : `<tr><td colspan="9" class="no-data">No batches logged for this line yet.</td></tr>`}</tbody>
+          <thead><tr><th>Date</th><th>Shift</th><th>Variant</th><th class="num">Batch Wt</th><th class="num">Fines Wt</th><th class="num">Yield Wt</th><th class="num">Reject (kg)</th><th class="num">FP Output</th><th class="num">Yield %</th><th class="num">Recovery %</th><th></th></tr></thead>
+          <tbody>${g.items.length ? rows : `<tr><td colspan="11" class="no-data">No batches logged for this line yet.</td></tr>`}</tbody>
         </table>
       </div>`;
   }).join('') : `<div class="no-data">No lines set up for this facility.</div>`;
@@ -1069,10 +1110,10 @@ async function submitBatch(plantId){
     return;
   }
   const record = {
-    date, lineId, variantId,
+    date, shiftLabel: g('b_shift').value, lineId, variantId,
     batchWeight: parseFloat(g('b_batchWeight').value)||0,
-    yieldWeight: parseFloat(g('b_yieldWeight').value)||0,
-    reject: parseFloat(g('b_reject').value)||0,
+    finesWeight: parseFloat(g('b_finesWeight').value)||0,
+    rejectBags: parseFloat(g('b_rejectBags').value)||0,
     finishedOutput: parseFloat(g('b_finished').value)||0,
     createdAt: Date.now()
   };
@@ -1085,6 +1126,30 @@ async function deleteBatch(plantId, batchId){
 }
 
 /* ---------------- DIE LOG TAB ---------------- */
+/* ---- Die helpers: backward compatible with old Active/Removed status + old throughputTons field ---- */
+function dieIsActiveStatus(status){ return status==='Active' || status==='Still Active'; }
+function dieIsRetiredStatus(status){ return status==='Removed' || status==='Worn Out'; }
+function dieEntryThroughputTons(d){
+  return (d.feedrateKgHr!=null) ? ((d.runningHours||0)*(d.feedrateKgHr||0)/1000) : (d.throughputTons||0);
+}
+function dieEntryDate(d){ return d.date || d.installDate || ''; }
+function dieSummaries(list){
+  const map = {};
+  list.forEach(d=>{
+    const key = (d.dieId||'').trim();
+    if(!key) return;
+    if(!map[key]) map[key] = {dieId:key, entries:[]};
+    map[key].entries.push(d);
+  });
+  return Object.values(map).map(g=>{
+    const sorted = [...g.entries].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+    const latest = sorted[0];
+    const totalRunningHours = g.entries.reduce((a,d)=>a+(d.runningHours||0),0);
+    const totalThroughputTons = g.entries.reduce((a,d)=>a+dieEntryThroughputTons(d),0);
+    return {dieId:g.dieId, latest, entryCount:g.entries.length, totalRunningHours, totalThroughputTons, retired: latest?dieIsRetiredStatus(latest.status):false};
+  }).sort((a,b)=>(b.latest&&b.latest.createdAt||0)-(a.latest&&a.latest.createdAt||0));
+}
+
 function renderDieTab(plant){
   const content = document.getElementById('tabContent');
   const dieLines = (plant.lines||[]).filter(l=>l.type!=='Crumbler');
@@ -1095,29 +1160,54 @@ function renderDieTab(plant){
   }
   content.innerHTML = `
     <div class="panel">
-      <div class="panel-title">Log Die Event</div>
+      <div class="panel-title">Log Die Entry</div>
       <div class="field-grid">
+        <div class="field"><label>Date</label><input type="date" id="d_date" value="${new Date().toISOString().slice(0,10)}"></div>
+        <div class="field"><label>Shift</label><select id="d_shift"><option>Day</option><option>Night</option></select></div>
         <div class="field"><label>Line</label><select id="d_line">${dieLines.map(l=>`<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select></div>
         <div class="field"><label>Die ID</label><input id="d_id" placeholder="e.g. DIE-014"></div>
-        <div class="field"><label>Install Date</label><input type="date" id="d_install" value="${new Date().toISOString().slice(0,10)}"></div>
-        <div class="field"><label>Status</label><select id="d_status" onchange="document.getElementById('removalFields').style.display=this.value==='Removed'?'flex':'none'"><option value="Active">Still Active</option><option value="Removed">Removed</option></select></div>
+        <div class="field"><label>Status</label><select id="d_status" onchange="document.getElementById('reasonField').style.display=this.value==='Worn Out'?'flex':'none'"><option value="Still Active">Still Active</option><option value="Worn Out">Worn Out</option></select></div>
       </div>
-      <div class="field-grid" id="removalFields" style="display:none;margin-top:10px;">
-        <div class="field"><label>Removal Date</label><input type="date" id="d_removal"></div>
-        <div class="field"><label>Removal Reason</label><select id="d_reason"><option>Wear</option><option>Clogging</option><option>Damage</option><option>Scheduled Maintenance</option><option>Other</option></select></div>
+      <div class="field-grid" id="reasonField" style="display:none;margin-top:10px;">
+        <div class="field"><label>Reason</label><select id="d_reason"><option>Wear</option><option>Clogging</option><option>Damage</option><option>Scheduled Maintenance</option><option>Other</option></select></div>
       </div>
       <div class="field-grid" style="margin-top:10px;">
-        <div class="field"><label>Running Hours</label><input type="number" step="0.1" id="d_hours" placeholder="0"></div>
-        <div class="field"><label>Throughput (tons)</label><input type="number" step="0.1" id="d_throughput" placeholder="0"></div>
+        <div class="field"><label>Running Hours (this entry)</label><input type="number" step="0.1" id="d_hours" placeholder="0"></div>
+        <div class="field"><label>Feedrate (kg/hr)</label><input type="number" step="0.1" id="d_feedrate" placeholder="0"></div>
         <div class="field"><label>Notes</label><input type="text" id="d_notes"></div>
       </div>
-      <div style="margin-top:14px;"><button class="btn" onclick="submitDie('${plant.id}')">Save Die Record</button></div>
+      <div class="calc-note">Throughput (this entry) = Running Hours × Feedrate ÷ 1000 (tons). A die's total lifetime output is the sum of every entry logged under the same Die ID — same Die ID always adds to its running tally, regardless of date or line.</div>
+      <div style="margin-top:14px;"><button class="btn" onclick="submitDie('${plant.id}')">Save Die Entry</button></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Die Summary — Lifetime Tally by Die ID</div>
+      <div id="dieSummaryWrap"></div>
     </div>
     <div class="panel">
       <div class="panel-title">Die History</div>
       <div id="dieTableWrap"></div>
     </div>`;
+  renderDieSummary(plant);
   renderDieTable(plant);
+}
+function renderDieSummary(plant){
+  const wrap = document.getElementById('dieSummaryWrap');
+  if(!wrap) return;
+  const summaries = dieSummaries(diesCache);
+  if(!summaries.length){ wrap.innerHTML = `<div class="no-data">No die entries logged yet.</div>`; return; }
+  wrap.innerHTML = `
+    <table>
+      <thead><tr><th>Die ID</th><th>Status</th><th>Last Line</th><th class="num">Entries</th><th class="num">Total Running Hrs</th><th class="num">Total Throughput (t)</th><th>Last Logged</th></tr></thead>
+      <tbody>${summaries.map(s=>`<tr>
+        <td>${esc(s.dieId)}</td>
+        <td>${s.retired?'<span class="badge badge-dim">Worn Out</span>':'<span class="badge badge-info">Still Active</span>'}</td>
+        <td>${s.latest?esc(lineName(plant,s.latest.lineId)):'—'}</td>
+        <td class="num">${s.entryCount}</td>
+        <td class="num">${fmt(s.totalRunningHours,1)}</td>
+        <td class="num">${fmt(s.totalThroughputTons,1)}</td>
+        <td>${s.latest?dieEntryDate(s.latest):'—'}</td>
+      </tr>`).join('')}</tbody>
+    </table>`;
 }
 function renderDieTable(plant){
   const wrap = document.getElementById('dieTableWrap');
@@ -1126,17 +1216,19 @@ function renderDieTable(plant){
   const groups = groupByLine(diesCache, dieLines);
   wrap.innerHTML = groups.length ? groups.map(g=>{
     const rows = g.items.map(d=>`<tr>
-        <td>${esc(d.dieId)}</td><td>${d.installDate}</td>
-        <td>${d.status==='Active'?'<span class="badge badge-info">Active</span>':'<span class="badge badge-dim">Removed</span>'}</td>
-        <td>${d.removalDate||'—'}</td><td class="num">${d.runningHours?fmt(d.runningHours,1):'—'}</td><td class="num">${d.throughputTons?fmt(d.throughputTons,1):'—'}</td>
+        <td>${dieEntryDate(d)}</td><td>${esc(d.shiftLabel||'—')}</td><td>${esc(d.dieId)}</td>
+        <td>${dieIsActiveStatus(d.status)?'<span class="badge badge-info">Still Active</span>':'<span class="badge badge-dim">Worn Out</span>'}</td>
+        <td class="num">${d.runningHours?fmt(d.runningHours,1):'—'}</td>
+        <td class="num">${d.feedrateKgHr?fmt(d.feedrateKgHr,1):'—'}</td>
+        <td class="num">${fmt(dieEntryThroughputTons(d),2)}</td>
         <td>${d.reason||'—'}</td><td class="num"><button class="del-btn" onclick="deleteDie('${plant.id}','${d.id}')">✕</button></td>
       </tr>`).join('');
     return `
       <div class="line-group">
         <div class="line-group-header"><span class="lg-name">${esc(g.line.name)}</span><span class="lg-type">${esc(g.line.type)}</span></div>
         <table>
-          <thead><tr><th>Die</th><th>Installed</th><th>Status</th><th>Removed</th><th class="num">Running Hrs</th><th class="num">Throughput (t)</th><th>Reason</th><th></th></tr></thead>
-          <tbody>${g.items.length ? rows : `<tr><td colspan="8" class="no-data">No die records for this line yet.</td></tr>`}</tbody>
+          <thead><tr><th>Date</th><th>Shift</th><th>Die</th><th>Status</th><th class="num">Running Hrs</th><th class="num">Feedrate</th><th class="num">Throughput (t)</th><th>Reason</th><th></th></tr></thead>
+          <tbody>${g.items.length ? rows : `<tr><td colspan="9" class="no-data">No die entries for this line yet.</td></tr>`}</tbody>
         </table>
       </div>`;
   }).join('') : `<div class="no-data">No extruder or pellet mill lines set up.</div>`;
@@ -1145,8 +1237,8 @@ async function submitDie(plantId){
   const g = id=>document.getElementById(id);
   const plant = currentPlant();
   const dieId = g('d_id').value.trim();
-  const installDate = g('d_install').value;
-  if(!dieId || !installDate){ alert('Enter a die ID and install date.'); return; }
+  const date = g('d_date').value;
+  if(!dieId || !date){ alert('Enter a die ID and date.'); return; }
   const lineId = g('d_line').value;
   if(!lineId || !lineObj(plant,lineId)){
     alert('The Line selected is no longer valid (it may have been renamed or removed). Please re-select it and try again.');
@@ -1155,11 +1247,10 @@ async function submitDie(plantId){
   }
   const status = g('d_status').value;
   const record = {
-    lineId, dieId, installDate, status,
-    removalDate: status==='Removed'?g('d_removal').value:'',
-    reason: status==='Removed'?g('d_reason').value:'',
+    lineId, dieId, date, shiftLabel: g('d_shift').value, status,
+    reason: status==='Worn Out'?g('d_reason').value:'',
     runningHours: parseFloat(g('d_hours').value)||0,
-    throughputTons: parseFloat(g('d_throughput').value)||0,
+    feedrateKgHr: parseFloat(g('d_feedrate').value)||0,
     notes: g('d_notes').value,
     createdAt: Date.now()
   };
@@ -1205,7 +1296,7 @@ function buildReport(plantId, ym, lineFilter){
 
   // Section 1 — batch based
   const totalBatchWeight = batchList.reduce((a,b)=>a+(b.batchWeight||0),0);
-  const totalYieldWeight = batchList.reduce((a,b)=>a+(b.yieldWeight||0),0);
+  const totalYieldWeight = batchList.reduce((a,b)=>a+batchMetrics(b, plant).yieldWeight,0);
   const overallYield = totalBatchWeight>0 ? (totalYieldWeight/totalBatchWeight*100) : 0;
   const rawByVariant = groupSum(batchList, b=>variantName(plant,b.variantId), b=>b.batchWeight||0);
 
@@ -1242,13 +1333,13 @@ function buildReport(plantId, ym, lineFilter){
     labels += `<span style="flex:1;text-align:center;font-size:8.5px;color:var(--text-dim2);font-family:'JetBrains Mono';">${(d%5===0||d===1)?d:''}</span>`;
   }
 
-  // Section 4 — dies
+  // Section 4 — dies (tallied per Die ID; same Die ID always adds to its lifetime total)
   let dieList = [...diesCache];
   if(lineFilter!=='all') dieList = dieList.filter(d=>d.lineId===lineFilter);
-  dieList.sort((a,b)=>a.installDate.localeCompare(b.installDate));
-  const removedDies = dieList.filter(d=>d.status==='Removed' && d.runningHours>0);
-  const avgLifeHours = removedDies.length ? avg(removedDies.map(d=>d.runningHours)) : 0;
-  const avgLifeTons = removedDies.length ? avg(removedDies.map(d=>d.throughputTons)) : 0;
+  const dieSums = dieSummaries(dieList);
+  const retiredDies = dieSums.filter(s=>s.retired);
+  const avgLifeHours = retiredDies.length ? avg(retiredDies.map(s=>s.totalRunningHours)) : 0;
+  const avgLifeTons = retiredDies.length ? avg(retiredDies.map(s=>s.totalThroughputTons)) : 0;
 
   body.innerHTML = `
     <div class="panel">
@@ -1313,13 +1404,13 @@ function buildReport(plantId, ym, lineFilter){
     <div class="panel">
       <h3 style="font-size:15px;margin-bottom:12px;"><span class="section-num">4.</span>Die Performance and Service Life Analysis</h3>
       <div class="stat-grid" style="margin-bottom:14px;">
-        <div class="stat-card"><div class="label">Avg Service Life</div><div class="value accent">${avgLifeHours?fmt(avgLifeHours,1):'—'}</div><div class="sub">hours (removed dies)</div></div>
-        <div class="stat-card"><div class="label">Avg Throughput Life</div><div class="value">${avgLifeTons?fmt(avgLifeTons,1):'—'}</div><div class="sub">tons before change</div></div>
-        <div class="stat-card"><div class="label">Dies On Record</div><div class="value">${dieList.length}</div><div class="sub">all-time</div></div>
-        <div class="stat-card"><div class="label">Currently Active</div><div class="value">${dieList.filter(d=>d.status==='Active').length}</div><div class="sub">in service</div></div>
+        <div class="stat-card"><div class="label">Avg Service Life</div><div class="value accent">${avgLifeHours?fmt(avgLifeHours,1):'—'}</div><div class="sub">hours (worn out dies, lifetime total)</div></div>
+        <div class="stat-card"><div class="label">Avg Throughput Life</div><div class="value">${avgLifeTons?fmt(avgLifeTons,1):'—'}</div><div class="sub">tons before retirement</div></div>
+        <div class="stat-card"><div class="label">Dies On Record</div><div class="value">${dieSums.length}</div><div class="sub">unique die IDs</div></div>
+        <div class="stat-card"><div class="label">Currently Active</div><div class="value">${dieSums.filter(s=>!s.retired).length}</div><div class="sub">in service</div></div>
       </div>
-      <table><thead><tr><th>Line</th><th>Die</th><th>Installed</th><th>Status</th><th>Removed</th><th class="num">Running Hrs</th><th class="num">Throughput (t)</th><th>Reason</th></tr></thead>
-        <tbody>${dieList.length ? dieList.map(d=>`<tr><td>${esc(lineName(plant,d.lineId))}</td><td>${esc(d.dieId)}</td><td>${d.installDate}</td><td>${d.status==='Active'?'<span class="badge badge-info">Active</span>':'<span class="badge badge-dim">Removed</span>'}</td><td>${d.removalDate||'—'}</td><td class="num">${d.runningHours?fmt(d.runningHours,1):'—'}</td><td class="num">${d.throughputTons?fmt(d.throughputTons,1):'—'}</td><td>${d.reason||'—'}</td></tr>`).join('') : `<tr><td colspan="8" class="no-data">No die records yet.</td></tr>`}</tbody>
+      <table><thead><tr><th>Die ID</th><th>Status</th><th>Last Line</th><th class="num">Entries</th><th class="num">Total Running Hrs</th><th class="num">Total Throughput (t)</th><th>Last Logged</th></tr></thead>
+        <tbody>${dieSums.length ? dieSums.map(s=>`<tr><td>${esc(s.dieId)}</td><td>${s.retired?'<span class="badge badge-dim">Worn Out</span>':'<span class="badge badge-info">Still Active</span>'}</td><td>${s.latest?esc(lineName(plant,s.latest.lineId)):'—'}</td><td class="num">${s.entryCount}</td><td class="num">${fmt(s.totalRunningHours,1)}</td><td class="num">${fmt(s.totalThroughputTons,1)}</td><td>${s.latest?dieEntryDate(s.latest):'—'}</td></tr>`).join('') : `<tr><td colspan="7" class="no-data">No die records yet.</td></tr>`}</tbody>
       </table>
     </div>`;
 }
