@@ -206,12 +206,12 @@
    → General → Your apps → SDK setup and configuration).
    ============================================================ */
 const firebaseConfig = {
-  apiKey: "AIzaSyCvFCp33X18zRx7DWxZ-k2EVo_K8ItFuS8",
-  authDomain: "productionr-2ca22.firebaseapp.com",
-  projectId: "productionr-2ca22",
-  storageBucket: "productionr-2ca22.firebasestorage.app",
-  messagingSenderId: "550974432860",
-  appId: "1:550974432860:web:a003243c7ae9042ee0e899"
+  apiKey: "AIzaSyB_tgkmCtOKSZxxrH2zpMJROcg3ICvWMm8",
+  authDomain: "plant-operation.firebaseapp.com",
+  projectId: "plant-operation",
+  storageBucket: "plant-operation.firebasestorage.app",
+  messagingSenderId: "63714104008",
+  appId: "1:63714104008:web:8bdbcc4938b528e0fdcbfd"
 };
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
@@ -306,7 +306,7 @@ function subscribePlants(){
   }
 }
 function normalizePlant(id, data){
-  return {id, name:data.name||'Unnamed', shiftHours:data.shiftHours||8, lines:data.lines||[], variants:data.variants||[], ict:data.ict||{}};
+  return {id, name:data.name||'Unnamed', shiftHours:data.shiftHours||8, lines:data.lines||[], variants:data.variants||[], ict:data.ict||{}, targetSme:data.targetSme||{}};
 }
 function subscribePlantData(plantId){
   if(shiftsUnsub) shiftsUnsub();
@@ -495,6 +495,38 @@ async function updateIct(plantId, key, val){
   await db.collection('plants').doc(plantId).update({ict});
 }
 
+function openTargetSme(plantId){ renderTargetSmeModal(plants.find(p=>p.id===plantId)); }
+function renderTargetSmeModal(plant){
+  const lines = plant.lines||[], variants = plant.variants||[];
+  let table;
+  if(!lines.length || !variants.length){
+    table = `<div class="no-data">Add at least one line and one variant first.</div>`;
+  } else {
+    table = `<table class="matrix-table"><thead><tr><th>Line \\ Variant</th>${variants.map(v=>`<th>${esc(v.name)}</th>`).join('')}</tr></thead><tbody>
+      ${lines.map(l=>`<tr><th>${esc(l.name)}</th>${variants.map(v=>{
+        const key = l.id+'_'+v.id;
+        const val = (plant.targetSme||{})[key] || '';
+        return `<td><input type="number" step="0.01" value="${val}" onchange="updateTargetSme('${plant.id}','${key}',this.value)"></td>`;
+      }).join('')}</tr>`).join('')}
+    </tbody></table>`;
+  }
+  document.getElementById('modalRoot').innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
+      <div class="modal wide">
+        <h3>Target SME (kWh / ton) — ${esc(plant.name)}</h3>
+        <div class="calc-note" style="margin-bottom:10px;">Admin-set target per Line + Variant combination. Shown alongside the actual average SME in the Monthly Report.</div>
+        ${table}
+        <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Done</button></div>
+      </div>
+    </div>`;
+}
+async function updateTargetSme(plantId, key, val){
+  const plant = plants.find(p=>p.id===plantId);
+  const targetSme = {...(plant.targetSme||{})};
+  targetSme[key] = parseFloat(val)||0;
+  await db.collection('plants').doc(plantId).update({targetSme});
+}
+
 /* ---------------- ADMIN: USER ACCOUNTS ---------------- */
 function renderUsersPanel(){
   return `
@@ -531,6 +563,123 @@ function renderUsersPanel(){
       </table>
       <div class="calc-note">Removing a login here only revokes its app access (deletes its role record) — it does not delete the Firebase Authentication account. Do that in the Firebase console if needed.</div>
     </div>`;
+}
+function getWeekRange(anchorDateStr){
+  const d = new Date(anchorDateStr+'T00:00:00');
+  const day = d.getDay();
+  const diffToMonday = (day===0?-6:1-day);
+  const monday = new Date(d); monday.setDate(d.getDate()+diffToMonday);
+  const sunday = new Date(monday); sunday.setDate(monday.getDate()+6);
+  const f = dt=>dt.toISOString().slice(0,10);
+  return {start:f(monday), end:f(sunday)};
+}
+function renderCompanyReport(){
+  const main = document.getElementById('mainArea');
+  const today = new Date().toISOString().slice(0,10);
+  const ym = today.slice(0,7);
+  main.innerHTML = `
+    <div class="workspace-head"><h1>Admin — Company Report</h1></div>
+    <div class="panel">
+      <div class="month-picker">
+        <span class="eyebrow">Period</span>
+        <select id="cr_periodType" onchange="onCompanyPeriodTypeChange()">
+          <option value="monthly">Monthly</option>
+          <option value="weekly">Weekly</option>
+        </select>
+        <span class="eyebrow" id="cr_monthLabel">Month</span>
+        <input type="month" id="cr_month" value="${ym}" onchange="generateCompanyReport()">
+        <span class="eyebrow" id="cr_weekLabel" style="display:none;">Week Starting (pick any day in that week)</span>
+        <input type="date" id="cr_weekAnchor" value="${today}" style="display:none;" onchange="generateCompanyReport()">
+        <button class="btn small" onclick="window.print()">Print / Export PDF</button>
+      </div>
+      <div id="companyReportBody"><div class="no-data">Loading…</div></div>
+    </div>`;
+  generateCompanyReport();
+}
+function onCompanyPeriodTypeChange(){
+  const type = document.getElementById('cr_periodType').value;
+  document.getElementById('cr_monthLabel').style.display = type==='monthly'?'inline':'none';
+  document.getElementById('cr_month').style.display = type==='monthly'?'inline-block':'none';
+  document.getElementById('cr_weekLabel').style.display = type==='weekly'?'inline':'none';
+  document.getElementById('cr_weekAnchor').style.display = type==='weekly'?'inline-block':'none';
+  generateCompanyReport();
+}
+async function generateCompanyReport(){
+  const body = document.getElementById('companyReportBody');
+  if(!body) return;
+  body.innerHTML = `<div class="no-data">Loading…</div>`;
+  const typeEl = document.getElementById('cr_periodType');
+  const type = typeEl ? typeEl.value : 'monthly';
+  let start, end, label;
+  if(type==='monthly'){
+    const ym = document.getElementById('cr_month').value;
+    start = ym+'-01';
+    const daysInMonth = new Date(parseInt(ym.slice(0,4)),parseInt(ym.slice(5,7)),0).getDate();
+    end = ym+'-'+String(daysInMonth).padStart(2,'0');
+    label = monthLabel(ym);
+  } else {
+    const anchor = document.getElementById('cr_weekAnchor').value;
+    const wr = getWeekRange(anchor);
+    start = wr.start; end = wr.end;
+    label = `Week of ${wr.start} to ${wr.end}`;
+  }
+
+  const rows = [];
+  const plantTotals = [];
+  for(const plant of plants){
+    let shiftsSnap;
+    try{
+      shiftsSnap = await db.collection('plants').doc(plant.id).collection('shifts').get();
+    }catch(e){ plantTotals.push({plant, totalGoodOutputKg:0, avgOee:0, shiftCount:0}); continue; }
+    const allShifts = shiftsSnap.docs.map(d=>({id:d.id,...d.data()})).filter(s=>s.date>=start && s.date<=end);
+    if(!allShifts.length){ plantTotals.push({plant, totalGoodOutputKg:0, avgOee:0, shiftCount:0}); continue; }
+    const metrics = allShifts.map(s=>({s,m:shiftMetrics(s,plant)}));
+    const totalGoodOutputKg = metrics.reduce((a,x)=>a+x.m.goodOutputKg,0);
+    const avgOeeAll = avg(metrics.map(x=>x.m.oee));
+    plantTotals.push({plant, totalGoodOutputKg, avgOee:avgOeeAll, shiftCount:allShifts.length});
+
+    (plant.lines||[]).forEach(l=>{
+      const lm = metrics.filter(x=>x.s.lineId===l.id);
+      if(!lm.length) return;
+      const variantIdsUsed = [...new Set(lm.map(x=>x.s.variantId))];
+      variantIdsUsed.forEach(vid=>{
+        const vm = lm.filter(x=>x.s.variantId===vid);
+        if(!vm.length) return;
+        const variant = variantObj(plant, vid);
+        const targetSme = (plant.targetSme||{})[l.id+'_'+vid] || 0;
+        rows.push({
+          plant, line:l, variant, count:vm.length,
+          availability: avg(vm.map(x=>x.m.availability)),
+          performance: avg(vm.map(x=>x.m.performance)),
+          quality: avg(vm.map(x=>x.m.qualityRate)),
+          oee: avg(vm.map(x=>x.m.oee)),
+          sme: avg(vm.filter(x=>x.m.sme>0).map(x=>x.m.sme)),
+          targetSme
+        });
+      });
+    });
+  }
+  rows.sort((a,b)=>b.oee-a.oee);
+
+  if(!body) return;
+  body.innerHTML = `
+    <div class="calc-note" style="margin-bottom:12px;">Showing ${esc(label)}</div>
+    <div class="panel-title">Plant Summary</div>
+    <div class="stat-grid" style="margin-bottom:18px;">
+      ${plantTotals.map(pt=>{
+        const oc = oeeClass(pt.avgOee);
+        return `<div class="stat-card"><div class="label">${esc(pt.plant.name)}</div><div class="value accent">${fmt(pt.totalGoodOutputKg)}</div><div class="sub">kg good output · ${pt.shiftCount} shifts</div><div style="margin-top:6px;">${pt.shiftCount?`<span class="badge ${oc.cls}">${pt.avgOee.toFixed(1)}% OEE</span>`:'<span class="badge badge-dim">No data</span>'}</div></div>`;
+      }).join('')}
+    </div>
+    <div class="panel-title">Line Performance — All Plants (sorted by OEE, highest first)</div>
+    <table>
+      <thead><tr><th>Plant</th><th>Line</th><th>Variant</th><th class="num">Shifts</th><th class="num">Avail</th><th class="num">Perf</th><th class="num">Qual</th><th class="num">OEE</th><th class="num">Avg SME</th><th class="num">Target SME</th></tr></thead>
+      <tbody>${rows.length ? rows.map(r=>{
+        const oc = oeeClass(r.oee);
+        return `<tr><td>${esc(r.plant.name)}</td><td>${esc(r.line.name)}</td><td>${r.variant?esc(r.variant.name):'—'}</td><td class="num">${r.count}</td><td class="num">${r.availability.toFixed(0)}%</td><td class="num">${r.performance.toFixed(0)}%</td><td class="num">${r.quality.toFixed(0)}%</td><td class="num"><span class="badge ${oc.cls}">${r.oee.toFixed(1)}%</span></td><td class="num">${r.sme>0?r.sme.toFixed(2):'—'}</td><td class="num">${r.targetSme>0?r.targetSme.toFixed(2):'—'}</td></tr>`;
+      }).join('') : `<tr><td colspan="10" class="no-data">No shift data logged in this period.</td></tr>`}</tbody>
+    </table>
+  `;
 }
 async function createUserAccount(){
   const email = document.getElementById('u_email').value.trim();
@@ -579,8 +728,11 @@ function shiftMetrics(s, plant){
   const rejectKg = rejectBags * bagWeight;
   const qualityRate = actualOutputBags>0 ? (excellentBags/actualOutputBags*100) : 0; // Excellent ÷ Actual Output
 
-  const runHours = Math.max(0,(s.plannedHours||0)-(s.downtimeHours||0));
-  const availability = s.plannedHours>0 ? (runHours/s.plannedHours*100) : 0;
+  const isRequestOrder = s.orderDetails === 'Acc. to Request';
+  const runHours = isRequestOrder ? (s.actualRunTime||0) : Math.max(0,(s.plannedHours||0)-(s.downtimeHours||0));
+  const availability = isRequestOrder
+    ? (s.plannedHours>0 ? (1 + ((s.plannedHours - (s.actualRunTime||0)) / s.plannedHours)) * 100 : 0)
+    : (s.plannedHours>0 ? (runHours/s.plannedHours*100) : 0);
 
   const power = Math.sqrt(3) * (s.voltage||0) * (s.motorLoadAmp||0) * (s.powerFactor||0) * (s.efficiency||0) / 1000; // kW
   const sme = (s.feedrateTonHr>0) ? (power/s.feedrateTonHr) : 0; // kWh/ton
@@ -646,6 +798,7 @@ function renderSidebar(){
   if(currentRole==='admin'){
     html += `<button class="admin-nav-btn" onclick="openAdminView('facilities')">⚙ Admin: Facilities</button>`;
     html += `<button class="admin-nav-btn" onclick="openAdminView('users')">👤 Admin: User Accounts</button>`;
+    html += `<button class="admin-nav-btn" onclick="openAdminView('company')">📊 Admin: Company Report</button>`;
   }
   html += `<h2 class="eyebrow">Facilities</h2><div>`;
   if(!plants.length){
@@ -672,6 +825,7 @@ function renderMain(){
   const main = document.getElementById('mainArea');
   if(adminView==='facilities'){ mainRenderedKey=null; main.innerHTML = renderFacilitiesAdmin(); return; }
   if(adminView==='users'){ mainRenderedKey=null; main.innerHTML = `<div class="workspace-head"><h1>User Accounts</h1></div>` + renderUsersPanel(); return; }
+  if(adminView==='company'){ mainRenderedKey=null; renderCompanyReport(); return; }
   if(!plants.length){
     mainRenderedKey=null;
     main.innerHTML = `<div class="empty-state"><h2 style="color:var(--text-dim);">No facilities available</h2><p>${currentRole==='admin'?'Add a facility on the left to get started.':'Ask your admin to assign you a facility.'}</p></div>`;
@@ -704,7 +858,7 @@ function renderMain(){
         <div class="eyebrow">Facility Record</div>
         <h1>${esc(plant.name)}</h1>
         <div class="sub-line">STANDARD SHIFT: ${plant.shiftHours} HRS · ${(plant.lines||[]).length} LINE(S) · ${(plant.variants||[]).length} VARIANT(S)
-        ${currentRole==='admin' ? ` · <a href="#" onclick="openLines('${plant.id}');return false;">LINES</a> · <a href="#" onclick="openVariants('${plant.id}');return false;">VARIANTS</a> · <a href="#" onclick="openIct('${plant.id}');return false;">IDEAL CYCLE TIME</a>` : ''}</div>
+        ${currentRole==='admin' ? ` · <a href="#" onclick="openLines('${plant.id}');return false;">LINES</a> · <a href="#" onclick="openVariants('${plant.id}');return false;">VARIANTS</a> · <a href="#" onclick="openIct('${plant.id}');return false;">IDEAL CYCLE TIME</a> · <a href="#" onclick="openTargetSme('${plant.id}');return false;">TARGET SME</a>` : ''}</div>
       </div>
       <div class="tabs">
         <button class="tab-btn ${activeTab==='shift'?'active':''}" onclick="setTab('shift')">Shift Log</button>
@@ -768,12 +922,16 @@ function renderShiftTab(plant){
       <div class="field-grid">
         <div class="field"><label>Date</label><input type="date" id="s_date" value="${lastShiftDate}"></div>
         <div class="field"><label>Shift</label><select id="s_label"><option ${lastShiftLabel==='Day'?'selected':''}>Day</option><option ${lastShiftLabel==='Night'?'selected':''}>Night</option></select></div>
-        <div class="field"><label>Line</label><select id="s_line">${plant.lines.map(l=>`<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select></div>
-        <div class="field"><label>Variant / Product</label><select id="s_variant">${plant.variants.map(v=>`<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Line</label><select id="s_line" onchange="updatePlannedHoursFromRequest()">${plant.lines.map(l=>`<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Variant / Product</label><select id="s_variant" onchange="updatePlannedHoursFromRequest()">${plant.variants.map(v=>`<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select></div>
         <div class="field"><label>Recipe ID</label><input id="s_recipe" placeholder="e.g. 4299"></div>
+        <div class="field"><label>Order Details</label><select id="s_orderDetails" onchange="updatePlannedHoursFromRequest()"><option>Continuous Run</option><option>Acc. to Request</option></select></div>
+        <div class="field" id="qtyRequestedField" style="display:none;"><label>Qty. Requested (bags)</label><input type="number" id="s_qtyRequested" placeholder="0" oninput="updatePlannedHoursFromRequest()"></div>
+        <div class="field" id="actualRunTimeField" style="display:none;"><label>Actual Run Time (hrs)</label><input type="number" step="0.1" id="s_actualRunTime" placeholder="0"></div>
         <div class="field"><label>Planned Hours</label><input type="number" id="s_planned" value="${plant.shiftHours}"></div>
         <div class="field"><label>Downtime (hrs)</label><input type="number" step="0.1" id="s_downtime" value="0"></div>
       </div>
+      <div class="calc-note">Acc. to Request: Planned Hours = (Qty. Requested × Bag Weight) ÷ ((1 ÷ Ideal Cycle Time) × 3,600) — auto-calculated, read-only. Availability formula also changes for this order type (see Power &amp; SME note below).</div>
 
       <div class="group-title">Output (bags)</div>
       <div class="field-grid">
@@ -836,6 +994,7 @@ function renderShiftTab(plant){
     </div>
   `;
   renderQualityRows();
+  updatePlannedHoursFromRequest();
   renderShiftTable(plant);
 }
 function renderShiftTable(plant){
@@ -895,6 +1054,37 @@ function addQualityRow(){ draftQuality.push({issue:'',qty:0,rootCause:'',action:
 function removeQualityRow(i){ draftQuality.splice(i,1); renderQualityRows(); }
 function updateQuality(i,key,val){ draftQuality[i][key] = key==='qty' ? (parseFloat(val)||0) : val; }
 
+function updatePlannedHoursFromRequest(){
+  const plant = currentPlant();
+  if(!plant) return;
+  const orderType = document.getElementById('s_orderDetails')?.value;
+  const qtyWrap = document.getElementById('qtyRequestedField');
+  const runTimeWrap = document.getElementById('actualRunTimeField');
+  const plannedEl = document.getElementById('s_planned');
+  if(!plannedEl) return;
+  if(orderType === 'Acc. to Request'){
+    if(qtyWrap) qtyWrap.style.display='flex';
+    if(runTimeWrap) runTimeWrap.style.display='flex';
+    const lineId = document.getElementById('s_line')?.value;
+    const variantId = document.getElementById('s_variant')?.value;
+    const variant = variantObj(plant, variantId);
+    const bagWeight = variant ? (variant.bagWeight||0) : 0;
+    const ict = (plant.ict||{})[lineId+'_'+variantId] || 0;
+    const qty = parseFloat(document.getElementById('s_qtyRequested')?.value)||0;
+    const plannedHours = (ict>0 && bagWeight>0 && qty>0) ? ((qty*bagWeight) / ((1/ict)*3600)) : 0;
+    plannedEl.value = plannedHours.toFixed(2);
+    plannedEl.readOnly = true;
+    plannedEl.style.opacity = '0.65';
+    plannedEl.style.background = '#141618';
+  } else {
+    if(qtyWrap) qtyWrap.style.display='none';
+    if(runTimeWrap) runTimeWrap.style.display='none';
+    plannedEl.readOnly = false;
+    plannedEl.style.opacity = '';
+    plannedEl.style.background = '';
+    if(!plannedEl.value || parseFloat(plannedEl.value)===0) plannedEl.value = plant.shiftHours;
+  }
+}
 function updateActualOutputPreview(){
   const v = id=>parseFloat(document.getElementById(id)?.value)||0;
   const total = v('s_excellent')+v('s_good')+v('s_project')+v('s_rejectBags');
@@ -918,8 +1108,12 @@ async function submitShift(plantId){
     return;
   }
   const shiftLabel = g('s_label').value;
+  const orderDetails = g('s_orderDetails').value;
   const record = {
     date, shiftLabel, lineId, variantId, recipeId:g('s_recipe').value,
+    orderDetails,
+    qtyRequested: orderDetails==='Acc. to Request' ? (parseFloat(g('s_qtyRequested').value)||0) : 0,
+    actualRunTime: orderDetails==='Acc. to Request' ? (parseFloat(g('s_actualRunTime').value)||0) : 0,
     plannedHours: parseFloat(g('s_planned').value)||0, downtimeHours: parseFloat(g('s_downtime').value)||0,
     excellentBags: parseFloat(g('s_excellent').value)||0, goodBags: parseFloat(g('s_good').value)||0, projectBags: parseFloat(g('s_project').value)||0, rejectBags: parseFloat(g('s_rejectBags').value)||0, kgHr: parseFloat(g('s_kghr').value)||0,
     cylSteam: parseFloat(g('s_cylSteam').value)||0, cylWater: parseFloat(g('s_cylWater').value)||0,
@@ -973,6 +1167,8 @@ function showShiftDetail(shiftId, editMode){
         <div class="detail-grid">
           <div class="detail-item"><div class="dl">Recipe ID</div><div class="dv">${esc(s.recipeId||'—')}</div></div>
           <div class="detail-item"><div class="dl">Product</div><div class="dv">${m.variant?esc(m.variant.name):'—'}</div></div>
+          <div class="detail-item"><div class="dl">Order Details</div><div class="dv">${esc(s.orderDetails||'Continuous Run')}</div></div>
+          ${s.orderDetails==='Acc. to Request' ? `<div class="detail-item"><div class="dl">Qty. Requested</div><div class="dv">${fmt(s.qtyRequested)} bags</div></div><div class="detail-item"><div class="dl">Actual Run Time</div><div class="dv">${fmt(s.actualRunTime,1)} hrs</div></div>` : ''}
           <div class="detail-item"><div class="dl">Run Hours</div><div class="dv">${m.runHours.toFixed(1)}</div></div>
           <div class="detail-item"><div class="dl">Downtime</div><div class="dv">${s.downtimeHours} hrs</div></div>
           <div class="detail-item"><div class="dl">KG/HR Reading</div><div class="dv">${fmt(s.kgHr)}</div></div>
@@ -1303,6 +1499,18 @@ function buildReport(plantId, ym, lineFilter){
   // Section 2 — shift based
   const outputByVariant = groupSum(shiftList, s=>variantName(plant,s.variantId), s=>shiftMetrics(s,plant).goodOutputKg);
   const feedrateByVariant = groupAvg(shiftList, s=>variantName(plant,s.variantId), s=>s.feedrateTonHr||0);
+  const targetFeedrateByVariant = (()=>{
+    const sums={}, counts={};
+    shiftList.forEach(s=>{
+      const ict = (plant.ict||{})[s.lineId+'_'+s.variantId] || 0;
+      if(ict<=0) return;
+      const tf = (3600/ict)/1000; // ton/hr, derived from Ideal Cycle Time
+      const key = variantName(plant,s.variantId);
+      sums[key]=(sums[key]||0)+tf; counts[key]=(counts[key]||0)+1;
+    });
+    const out={}; Object.keys(sums).forEach(k=>out[k]=sums[k]/counts[k]);
+    return out;
+  })();
   const allIssues = [];
   shiftList.forEach(s=>(s.quality||[]).forEach(q=>allIssues.push({...q,date:s.date,shift:s.shiftLabel,line:lineName(plant,s.lineId),variant:variantName(plant,s.variantId)})));
   const totalRejected = metrics.reduce((a,x)=>a+x.m.rejectKg,0);
@@ -1311,15 +1519,25 @@ function buildReport(plantId, ym, lineFilter){
 
   // Section 3 — per line
   const linesInScope = lineFilter==='all' ? plant.lines : plant.lines.filter(l=>l.id===lineFilter);
-  const linePerf = linesInScope.map(l=>{
+  const linePerf = [];
+  linesInScope.forEach(l=>{
     const lm = metrics.filter(x=>x.s.lineId===l.id);
-    return {
-      line:l, count:lm.length,
-      availability: avg(lm.map(x=>x.m.availability)), performance: avg(lm.map(x=>x.m.performance)),
-      quality: avg(lm.map(x=>x.m.qualityRate)), oee: avg(lm.map(x=>x.m.oee)),
-      sme: avg(lm.filter(x=>x.m.sme>0).map(x=>x.m.sme))
-    };
-  }).filter(lp=>lp.count>0);
+    if(!lm.length) return;
+    const variantIdsUsed = [...new Set(lm.map(x=>x.s.variantId))];
+    variantIdsUsed.forEach(vid=>{
+      const vm = lm.filter(x=>x.s.variantId===vid);
+      if(!vm.length) return;
+      const variant = variantObj(plant, vid);
+      const targetSme = (plant.targetSme||{})[l.id+'_'+vid] || 0;
+      linePerf.push({
+        line:l, variant, count:vm.length,
+        availability: avg(vm.map(x=>x.m.availability)), performance: avg(vm.map(x=>x.m.performance)),
+        quality: avg(vm.map(x=>x.m.qualityRate)), oee: avg(vm.map(x=>x.m.oee)),
+        sme: avg(vm.filter(x=>x.m.sme>0).map(x=>x.m.sme)),
+        targetSme
+      });
+    });
+  });
 
   // Daily good output chart
   const daysInMonth = new Date(parseInt(ym.slice(0,4)),parseInt(ym.slice(5,7)),0).getDate();
@@ -1329,8 +1547,8 @@ function buildReport(plantId, ym, lineFilter){
   let bars='',labels='';
   for(let d=1; d<=daysInMonth; d++){
     const ds=`${ym}-${String(d).padStart(2,'0')}`; const v=dayTotals[ds]||0;
-    bars += `<div class="bar" style="flex:1;background:${v>0?'var(--amber)':'var(--amber-dim)'};min-width:5px;border-radius:2px 2px 0 0;height:${v>0?Math.max(4,(v/maxDay)*140):0}px" title="${ds}: ${fmt(v)} kg"></div>`;
-    labels += `<span style="flex:1;text-align:center;font-size:8.5px;color:var(--text-dim2);font-family:'JetBrains Mono';">${(d%5===0||d===1)?d:''}</span>`;
+    bars += `<div class="bar" style="flex:1 1 0;min-width:0;background:${v>0?'var(--amber)':'var(--amber-dim)'};border-radius:2px 2px 0 0;height:${v>0?Math.max(4,(v/maxDay)*140):0}px" title="${ds}: ${fmt(v)} kg"></div>`;
+    labels += `<span style="flex:1 1 0;min-width:0;text-align:center;font-size:8.5px;color:var(--text-dim2);font-family:'JetBrains Mono';overflow:hidden;">${(d%5===0||d===1)?d:''}</span>`;
   }
 
   // Section 4 — dies (tallied per Die ID; same Die ID always adds to its lifetime total)
@@ -1360,7 +1578,18 @@ function buildReport(plantId, ym, lineFilter){
       <div class="panel-title">A. Production Output by Variant (kg good output)</div>
       ${hbarTable(outputByVariant,'kg')}
       <div class="panel-title" style="margin-top:16px;">B. Average Production Feedrate by Variant (ton/hr)</div>
-      ${hbarTable(feedrateByVariant,'t/hr',true)}
+      <table>
+        <thead><tr><th>Variant</th><th class="num">Avg Actual (t/hr)</th><th class="num">Target (t/hr)</th><th class="num">vs Target</th></tr></thead>
+        <tbody>${Object.keys(feedrateByVariant).length ? Object.keys(feedrateByVariant).map(k=>{
+          const actual = feedrateByVariant[k];
+          const target = targetFeedrateByVariant[k]||0;
+          const diffPct = target>0 ? ((actual-target)/target*100) : null;
+          const diffLabel = diffPct==null ? 'target not set' : (diffPct>=0?'+':'')+diffPct.toFixed(1)+'%';
+          const diffCls = diffPct==null ? 'badge-dim' : (diffPct>=0?'badge-good':'badge-bad');
+          return `<tr><td>${esc(k)}</td><td class="num">${actual.toFixed(2)}</td><td class="num">${target>0?target.toFixed(2):'—'}</td><td class="num"><span class="badge ${diffCls}">${diffLabel}</span></td></tr>`;
+        }).join('') : `<tr><td colspan="4" class="no-data">No data available.</td></tr>`}</tbody>
+      </table>
+      <div class="calc-note">Target Feedrate (ton/hr) = 3,600 ÷ Ideal Cycle Time (s/kg) ÷ 1,000, averaged across the specific Line + Variant combinations actually run this month.</div>
       <div class="panel-title" style="margin-top:16px;">C. Quality Issues &amp; Root Cause Analysis</div>
       <table><thead><tr><th>Date</th><th>Shift</th><th>Line</th><th>Variant</th><th>Issue</th><th class="num">Qty (kg)</th><th>Root Cause</th></tr></thead>
         <tbody>${allIssues.length ? allIssues.map(q=>`<tr><td>${q.date}</td><td>${q.shift}</td><td>${esc(q.line)}</td><td>${esc(q.variant)}</td><td>${esc(q.issue)}</td><td class="num">${fmt(q.qty)}</td><td>${esc(q.rootCause)}</td></tr>`).join('') : `<tr><td colspan="7" class="no-data">No quality issues logged.</td></tr>`}</tbody>
@@ -1384,10 +1613,13 @@ function buildReport(plantId, ym, lineFilter){
       <div style="display:flex;gap:3px;margin-top:5px;">${labels}</div>
       ${linePerf.length ? linePerf.map(lp=>{
         const oc = oeeClass(lp.oee);
+        const smeDiff = lp.targetSme>0 ? (lp.sme - lp.targetSme) : null;
+        const smeStatus = smeDiff==null ? '' : (smeDiff<=0 ? '<span class="badge badge-good">At/under target</span>' : '<span class="badge badge-bad">Over target</span>');
         return `<div class="sub-block" style="margin-top:16px;">
-          <div style="font-size:12px;color:var(--text);font-family:'JetBrains Mono';margin-bottom:8px;">${esc(lp.line.name)} — ${esc(lp.line.type)} <span style="color:var(--text-dim2);">(${lp.count} shifts)</span></div>
-          <div class="stat-grid" style="grid-template-columns:repeat(1,200px);margin-bottom:10px;">
+          <div style="font-size:12px;color:var(--text);font-family:'JetBrains Mono';margin-bottom:8px;">${esc(lp.line.name)} — ${esc(lp.line.type)} · ${lp.variant?esc(lp.variant.name):'Unassigned'} <span style="color:var(--text-dim2);">(${lp.count} shifts)</span></div>
+          <div class="stat-grid" style="grid-template-columns:repeat(2,200px);margin-bottom:10px;">
             <div class="stat-card"><div class="label">Avg SME</div><div class="value accent">${lp.sme>0?lp.sme.toFixed(2):'—'}</div><div class="sub">kWh / ton</div></div>
+            <div class="stat-card"><div class="label">Target SME</div><div class="value">${lp.targetSme>0?lp.targetSme.toFixed(2):'—'}</div><div class="sub">${smeStatus||'not set'}</div></div>
           </div>
           <div class="gauge-row">
             ${gaugeCard('Availability', lp.availability)}
