@@ -103,6 +103,9 @@
   .badge-dim{background:rgba(154,159,166,.15);color:var(--text-dim);}
 
   .sub-block{background:var(--panel-3);border:1px solid var(--line);border-radius:var(--radius);padding:12px;margin-top:10px;}
+  details.sub-block summary{list-style:revert;}
+  details.sub-block summary::marker{color:var(--amber);}
+  details.sub-block[open] summary{margin-bottom:4px;}
   .calc-note{font-size:10.5px;color:var(--text-dim2);font-family:'JetBrains Mono';margin-top:8px;}
 
   .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
@@ -206,12 +209,12 @@
    → General → Your apps → SDK setup and configuration).
    ============================================================ */
 const firebaseConfig = {
-  apiKey: "AIzaSyCvFCp33X18zRx7DWxZ-k2EVo_K8ItFuS8",
-  authDomain: "productionr-2ca22.firebaseapp.com",
-  projectId: "productionr-2ca22",
-  storageBucket: "productionr-2ca22.firebasestorage.app",
-  messagingSenderId: "550974432860",
-  appId: "1:550974432860:web:a003243c7ae9042ee0e899"
+  apiKey: "AIzaSyB_tgkmCtOKSZxxrH2zpMJROcg3ICvWMm8",
+  authDomain: "plant-operation.firebaseapp.com",
+  projectId: "plant-operation",
+  storageBucket: "plant-operation.firebasestorage.app",
+  messagingSenderId: "63714104008",
+  appId: "1:63714104008:web:8bdbcc4938b528e0fdcbfd"
 };
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
@@ -229,7 +232,7 @@ let activePlantId = null;
 let activeTab = 'shift';
 let adminView = null;        // null | 'facilities' | 'users'
 let mainRenderedKey = null;  // tracks what's currently painted in #mainArea so live data updates don't wipe in-progress form input
-let lastShiftDate = new Date().toISOString().slice(0,10);
+let lastShiftDate = todayLocalStr();
 let lastShiftLabel = 'Day';
 let plantsUnsub=null, shiftsUnsub=null, diesUnsub=null, batchesUnsub=null;
 let draftQuality = [];
@@ -327,6 +330,19 @@ function subscribePlantData(plantId){
 }
 
 function uid(pre){ return (pre||'id')+'_'+Math.random().toString(36).slice(2,9); }
+/* Local-calendar-date helpers. IMPORTANT: never use Date#toISOString() for
+   "today"/date-picker defaults — it converts to UTC first, which silently
+   shifts the date by a day for any timezone ahead of UTC (e.g. Philippines,
+   UTC+8) during roughly a third of every day. Always build date strings
+   from local getters instead. */
+function localDateStr(dt){
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth()+1).padStart(2,'0');
+  const d = String(dt.getDate()).padStart(2,'0');
+  return `${y}-${m}-${d}`;
+}
+function todayLocalStr(){ return localDateStr(new Date()); }
+function currentMonthLocalStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
 function esc(s){ const d=document.createElement('div'); d.textContent=s==null?'':s; return d.innerHTML; }
 function closeModal(){ document.getElementById('modalRoot').innerHTML=''; }
 function fmt(n,dec){ if(n==null||isNaN(n)) return '0'; return n.toLocaleString(undefined,{minimumFractionDigits:dec||0,maximumFractionDigits:dec||0}); }
@@ -570,13 +586,12 @@ function getWeekRange(anchorDateStr){
   const diffToMonday = (day===0?-6:1-day);
   const monday = new Date(d); monday.setDate(d.getDate()+diffToMonday);
   const sunday = new Date(monday); sunday.setDate(monday.getDate()+6);
-  const f = dt=>dt.toISOString().slice(0,10);
-  return {start:f(monday), end:f(sunday)};
+  return {start:localDateStr(monday), end:localDateStr(sunday)};
 }
 function renderCompanyReport(){
   const main = document.getElementById('mainArea');
-  const today = new Date().toISOString().slice(0,10);
-  const ym = today.slice(0,7);
+  const today = todayLocalStr();
+  const ym = currentMonthLocalStr();
   main.innerHTML = `
     <div class="workspace-head"><h1>Admin — Company Report</h1></div>
     <div class="panel">
@@ -624,61 +639,116 @@ async function generateCompanyReport(){
     label = `Week of ${wr.start} to ${wr.end}`;
   }
 
-  const rows = [];
-  const plantTotals = [];
+  // Build per-plant structured data: plant -> lines -> variants
+  const plantData = [];
   for(const plant of plants){
     let shiftsSnap;
-    try{
-      shiftsSnap = await db.collection('plants').doc(plant.id).collection('shifts').get();
-    }catch(e){ plantTotals.push({plant, totalGoodOutputKg:0, avgOee:0, shiftCount:0}); continue; }
+    try{ shiftsSnap = await db.collection('plants').doc(plant.id).collection('shifts').get(); }
+    catch(e){ plantData.push({plant, lineGroups:[], totalGoodOutputKg:0, totalRejectKg:0, avgOee:0, shiftCount:0}); continue; }
     const allShifts = shiftsSnap.docs.map(d=>({id:d.id,...d.data()})).filter(s=>s.date>=start && s.date<=end);
-    if(!allShifts.length){ plantTotals.push({plant, totalGoodOutputKg:0, avgOee:0, shiftCount:0}); continue; }
     const metrics = allShifts.map(s=>({s,m:shiftMetrics(s,plant)}));
     const totalGoodOutputKg = metrics.reduce((a,x)=>a+x.m.goodOutputKg,0);
+    const totalRejectKg = metrics.reduce((a,x)=>a+x.m.rejectKg,0);
     const avgOeeAll = avg(metrics.map(x=>x.m.oee));
-    plantTotals.push({plant, totalGoodOutputKg, avgOee:avgOeeAll, shiftCount:allShifts.length});
 
-    (plant.lines||[]).forEach(l=>{
+    const lineGroups = (plant.lines||[]).map(l=>{
       const lm = metrics.filter(x=>x.s.lineId===l.id);
-      if(!lm.length) return;
+      if(!lm.length) return null;
       const variantIdsUsed = [...new Set(lm.map(x=>x.s.variantId))];
-      variantIdsUsed.forEach(vid=>{
+      const variantRows = variantIdsUsed.map(vid=>{
         const vm = lm.filter(x=>x.s.variantId===vid);
-        if(!vm.length) return;
+        if(!vm.length) return null;
         const variant = variantObj(plant, vid);
         const targetSme = (plant.targetSme||{})[l.id+'_'+vid] || 0;
-        rows.push({
-          plant, line:l, variant, count:vm.length,
+        const causeCounts = {};
+        vm.forEach(x=> (x.s.quality||[]).forEach(q=>{
+          const rc = (q.rootCause||'').trim();
+          if(!rc) return;
+          causeCounts[rc] = (causeCounts[rc]||0)+1;
+        }));
+        const topCauses = Object.entries(causeCounts).sort((a,b)=>b[1]-a[1]).slice(0,5);
+        return {
+          variant, count:vm.length,
+          finishedProductKg: vm.reduce((a,x)=>a+x.m.goodOutputKg,0),
+          rejectKg: vm.reduce((a,x)=>a+x.m.rejectKg,0),
           availability: avg(vm.map(x=>x.m.availability)),
           performance: avg(vm.map(x=>x.m.performance)),
           quality: avg(vm.map(x=>x.m.qualityRate)),
           oee: avg(vm.map(x=>x.m.oee)),
           sme: avg(vm.filter(x=>x.m.sme>0).map(x=>x.m.sme)),
-          targetSme
-        });
-      });
-    });
+          targetSme, topCauses
+        };
+      }).filter(Boolean);
+      return {line:l, variantRows, count:lm.length};
+    }).filter(Boolean);
+
+    plantData.push({plant, lineGroups, totalGoodOutputKg, totalRejectKg, avgOee:avgOeeAll, shiftCount:allShifts.length});
   }
-  rows.sort((a,b)=>b.oee-a.oee);
 
   if(!body) return;
+
+  const plantSummaryHtml = plantData.map(pd=>{
+    const oc = oeeClass(pd.avgOee);
+    return `<details class="sub-block" style="margin-top:12px;">
+      <summary style="cursor:pointer;font-family:'JetBrains Mono';font-size:12px;color:var(--text);">
+        ${esc(pd.plant.name)} <span style="color:var(--text-dim2);">— ${fmt(pd.totalGoodOutputKg)} kg finished product · ${fmt(pd.totalRejectKg)} kg reject · ${pd.shiftCount} shifts</span>
+        ${pd.shiftCount?`<span class="badge ${oc.cls}" style="margin-left:8px;">${pd.avgOee.toFixed(1)}% OEE</span>`:'<span class="badge badge-dim" style="margin-left:8px;">No data</span>'}
+      </summary>
+      <div style="margin-top:12px;">
+      ${pd.lineGroups.length ? pd.lineGroups.map(lg=>`
+        <div style="margin-bottom:14px;">
+          <div style="font-size:11.5px;color:var(--amber);font-family:'JetBrains Mono';margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">${esc(lg.line.name)} — ${esc(lg.line.type)}</div>
+          <table>
+            <thead><tr><th>Variant</th><th class="num">Finished Product (kg)</th><th class="num">Reject (kg)</th><th>Top Root Causes (occurrences)</th></tr></thead>
+            <tbody>${lg.variantRows.map(vr=>`<tr>
+              <td>${vr.variant?esc(vr.variant.name):'—'}</td>
+              <td class="num">${fmt(vr.finishedProductKg)}</td>
+              <td class="num">${fmt(vr.rejectKg)}</td>
+              <td>${vr.topCauses.length? vr.topCauses.map(([c,n])=>`${esc(c)} (${n})`).join(', ') : '—'}</td>
+            </tr>`).join('')}</tbody>
+          </table>
+        </div>`).join('') : `<div class="no-data">No shift data logged this period.</div>`}
+      </div>
+    </details>`;
+  }).join('');
+
+  const linePerfHtml = plantData.map(pd=>{
+    const oc = oeeClass(pd.avgOee);
+    return `<details class="sub-block" style="margin-top:12px;">
+      <summary style="cursor:pointer;font-family:'JetBrains Mono';font-size:12px;color:var(--text);">
+        ${esc(pd.plant.name)} ${pd.shiftCount?`<span class="badge ${oc.cls}" style="margin-left:8px;">${pd.avgOee.toFixed(1)}% OEE avg</span>`:'<span class="badge badge-dim" style="margin-left:8px;">No data</span>'}
+      </summary>
+      <div style="margin-top:12px;">
+      ${pd.lineGroups.length ? pd.lineGroups.map(lg=>`
+        <div style="margin-bottom:14px;">
+          <div style="font-size:11.5px;color:var(--amber);font-family:'JetBrains Mono';margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">${esc(lg.line.name)} — ${esc(lg.line.type)}</div>
+          <table>
+            <thead><tr><th>Variant</th><th class="num">Shifts</th><th class="num">Avail</th><th class="num">Perf</th><th class="num">Qual</th><th class="num">OEE</th><th class="num">Avg SME</th><th class="num">Target SME</th></tr></thead>
+            <tbody>${lg.variantRows.map(vr=>{
+              const vOc = oeeClass(vr.oee);
+              return `<tr>
+                <td>${vr.variant?esc(vr.variant.name):'—'}</td>
+                <td class="num">${vr.count}</td>
+                <td class="num">${vr.availability.toFixed(0)}%</td>
+                <td class="num">${vr.performance.toFixed(0)}%</td>
+                <td class="num">${vr.quality.toFixed(0)}%</td>
+                <td class="num"><span class="badge ${vOc.cls}">${vr.oee.toFixed(1)}%</span></td>
+                <td class="num">${vr.sme>0?vr.sme.toFixed(2):'—'}</td>
+                <td class="num">${vr.targetSme>0?vr.targetSme.toFixed(2):'—'}</td>
+              </tr>`;
+            }).join('')}</tbody>
+          </table>
+        </div>`).join('') : `<div class="no-data">No shift data logged this period.</div>`}
+      </div>
+    </details>`;
+  }).join('');
+
   body.innerHTML = `
     <div class="calc-note" style="margin-bottom:12px;">Showing ${esc(label)}</div>
-    <div class="panel-title">Plant Summary</div>
-    <div class="stat-grid" style="margin-bottom:18px;">
-      ${plantTotals.map(pt=>{
-        const oc = oeeClass(pt.avgOee);
-        return `<div class="stat-card"><div class="label">${esc(pt.plant.name)}</div><div class="value accent">${fmt(pt.totalGoodOutputKg)}</div><div class="sub">kg good output · ${pt.shiftCount} shifts</div><div style="margin-top:6px;">${pt.shiftCount?`<span class="badge ${oc.cls}">${pt.avgOee.toFixed(1)}% OEE</span>`:'<span class="badge badge-dim">No data</span>'}</div></div>`;
-      }).join('')}
-    </div>
-    <div class="panel-title">Line Performance — All Plants (sorted by OEE, highest first)</div>
-    <table>
-      <thead><tr><th>Plant</th><th>Line</th><th>Variant</th><th class="num">Shifts</th><th class="num">Avail</th><th class="num">Perf</th><th class="num">Qual</th><th class="num">OEE</th><th class="num">Avg SME</th><th class="num">Target SME</th></tr></thead>
-      <tbody>${rows.length ? rows.map(r=>{
-        const oc = oeeClass(r.oee);
-        return `<tr><td>${esc(r.plant.name)}</td><td>${esc(r.line.name)}</td><td>${r.variant?esc(r.variant.name):'—'}</td><td class="num">${r.count}</td><td class="num">${r.availability.toFixed(0)}%</td><td class="num">${r.performance.toFixed(0)}%</td><td class="num">${r.quality.toFixed(0)}%</td><td class="num"><span class="badge ${oc.cls}">${r.oee.toFixed(1)}%</span></td><td class="num">${r.sme>0?r.sme.toFixed(2):'—'}</td><td class="num">${r.targetSme>0?r.targetSme.toFixed(2):'—'}</td></tr>`;
-      }).join('') : `<tr><td colspan="10" class="no-data">No shift data logged in this period.</td></tr>`}</tbody>
-    </table>
+    <div class="panel-title">Plant Summary — click a plant to expand (grouped by Line → Variant)</div>
+    ${plantSummaryHtml}
+    <div class="panel-title" style="margin-top:24px;">Line Performance — click a plant to expand (grouped by Line → Variant)</div>
+    ${linePerfHtml}
   `;
 }
 async function createUserAccount(){
@@ -756,7 +826,7 @@ function batchMetrics(b, plant){
   const recoveryPct = b.batchWeight>0 ? ((b.finishedOutput||0)/b.batchWeight*100) : 0;
   return {yieldWeight, rejectKg, yieldPct, rejectPct, recoveryPct};
 }
-function monthPrefix(){ return new Date().toISOString().slice(0,7); }
+function monthPrefix(){ return currentMonthLocalStr(); }
 function avg(arr){ return arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0; }
 function groupSum(list, keyFn, valFn){ const m={}; list.forEach(i=>{const k=keyFn(i); m[k]=(m[k]||0)+valFn(i);}); return m; }
 function groupAvg(list, keyFn, valFn){ const s={},c={}; list.forEach(i=>{const k=keyFn(i); s[k]=(s[k]||0)+valFn(i); c[k]=(c[k]||0)+1;}); const o={}; Object.keys(s).forEach(k=>o[k]=s[k]/c[k]); return o; }
@@ -781,7 +851,12 @@ function gaugeSvg(pct, color){
   const r=54, cx=68, cy=68;
   const toXY=(ang)=>{const rad=ang*Math.PI/180; return [cx+r*Math.cos(rad), cy-r*Math.sin(rad)];};
   const [sx,sy]=toXY(180); const [ex,ey]=toXY(180-(pct/100)*180);
-  const largeArc = pct>50?1:0;
+  // The filled arc's angular span is (pct/100)*180deg, which never exceeds
+  // 180deg — so it is always the SVG "minor" arc. largeArcFlag must always
+  // be 0 here; setting it to 1 above 50% (the old, buggy version) makes the
+  // renderer draw the *other* way around the circle, which gets clipped by
+  // the viewBox and shows up as a short broken stub instead of a full sweep.
+  const largeArc = 0;
   return `<svg viewBox="0 0 136 74" width="136" height="74">
     <path d="M ${cx-r} ${cy} A ${r} ${r} 0 0 1 ${cx+r} ${cy}" fill="none" stroke="#3A3F45" stroke-width="11" stroke-linecap="round"/>
     <path d="M ${sx} ${sy} A ${r} ${r} 0 ${largeArc} 1 ${ex} ${ey}" fill="none" stroke="${color}" stroke-width="11" stroke-linecap="round"/>
@@ -896,6 +971,7 @@ function renderFacilitiesAdmin(){
         <button class="btn small" onclick="openLines('${p.id}')">Manage Lines</button>
         <button class="btn small" onclick="openVariants('${p.id}')">Manage Variants</button>
         <button class="btn small" onclick="openIct('${p.id}')">Ideal Cycle Time Matrix</button>
+        <button class="btn small" onclick="openTargetSme('${p.id}')">Target SME Matrix</button>
       </div>
     </div>`;
   });
@@ -1168,7 +1244,7 @@ function showShiftDetail(shiftId, editMode){
           <div class="detail-item"><div class="dl">Recipe ID</div><div class="dv">${esc(s.recipeId||'—')}</div></div>
           <div class="detail-item"><div class="dl">Product</div><div class="dv">${m.variant?esc(m.variant.name):'—'}</div></div>
           <div class="detail-item"><div class="dl">Order Details</div><div class="dv">${esc(s.orderDetails||'Continuous Run')}</div></div>
-          ${s.orderDetails==='Acc. to Request' ? `<div class="detail-item"><div class="dl">Qty. Requested</div><div class="dv">${fmt(s.qtyRequested)} bags</div></div><div class="detail-item"><div class="dl">Actual Run Time</div><div class="dv">${fmt(s.actualRunTime,1)} hrs</div></div>` : ''}
+          ${s.orderDetails==='Acc. to Request' ? `<div class="detail-item"><div class="dl">Qty. Requested</div><div class="dv">${fmt(s.qtyRequested)} bags</div></div><div class="detail-item"><div class="dl">Planned Hours</div><div class="dv">${fmt(s.plannedHours,2)} hrs</div></div><div class="detail-item"><div class="dl">Actual Run Time</div><div class="dv">${fmt(s.actualRunTime,1)} hrs</div></div>` : ''}
           <div class="detail-item"><div class="dl">Run Hours</div><div class="dv">${m.runHours.toFixed(1)}</div></div>
           <div class="detail-item"><div class="dl">Downtime</div><div class="dv">${s.downtimeHours} hrs</div></div>
           <div class="detail-item"><div class="dl">KG/HR Reading</div><div class="dv">${fmt(s.kgHr)}</div></div>
@@ -1251,7 +1327,7 @@ function renderBatchTab(plant){
     <div class="panel">
       <div class="panel-title">New Batch Entry</div>
       <div class="field-grid">
-        <div class="field"><label>Date</label><input type="date" id="b_date" value="${new Date().toISOString().slice(0,10)}"></div>
+        <div class="field"><label>Date</label><input type="date" id="b_date" value="${todayLocalStr()}"></div>
         <div class="field"><label>Shift</label><select id="b_shift"><option>Day</option><option>Night</option></select></div>
         <div class="field"><label>Line</label><select id="b_line">${plant.lines.map(l=>`<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select></div>
         <div class="field"><label>Variant</label><select id="b_variant">${plant.variants.map(v=>`<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select></div>
@@ -1358,7 +1434,7 @@ function renderDieTab(plant){
     <div class="panel">
       <div class="panel-title">Log Die Entry</div>
       <div class="field-grid">
-        <div class="field"><label>Date</label><input type="date" id="d_date" value="${new Date().toISOString().slice(0,10)}"></div>
+        <div class="field"><label>Date</label><input type="date" id="d_date" value="${todayLocalStr()}"></div>
         <div class="field"><label>Shift</label><select id="d_shift"><option>Day</option><option>Night</option></select></div>
         <div class="field"><label>Line</label><select id="d_line">${dieLines.map(l=>`<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select></div>
         <div class="field"><label>Die ID</label><input id="d_id" placeholder="e.g. DIE-014"></div>
@@ -1461,11 +1537,11 @@ async function deleteDie(plantId, dieRecId){
 /* ---------------- MONTHLY REPORT TAB ---------------- */
 function renderReportTab(plant){
   const content = document.getElementById('tabContent');
-  const now = new Date();
+  const nowYm = currentMonthLocalStr();
   content.innerHTML = `
     <div class="month-picker">
       <span class="eyebrow">Reporting Month</span>
-      <input type="month" id="reportMonth" value="${now.toISOString().slice(0,7)}" onchange="buildReport('${plant.id}', this.value, document.getElementById('reportLine').value)">
+      <input type="month" id="reportMonth" value="${nowYm}" onchange="buildReport('${plant.id}', this.value, document.getElementById('reportLine').value)">
       <span class="eyebrow">Line</span>
       <select id="reportLine" onchange="buildReport('${plant.id}', document.getElementById('reportMonth').value, this.value)">
         <option value="all">All Lines</option>
@@ -1474,7 +1550,7 @@ function renderReportTab(plant){
       <button class="btn small" onclick="window.print()">Print / Export PDF</button>
     </div>
     <div id="reportBody"></div>`;
-  buildReport(plant.id, now.toISOString().slice(0,7), 'all');
+  buildReport(plant.id, nowYm, 'all');
 }
 function buildReport(plantId, ym, lineFilter){
   lineFilter = lineFilter || 'all';
