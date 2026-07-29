@@ -209,12 +209,12 @@
    → General → Your apps → SDK setup and configuration).
    ============================================================ */
 const firebaseConfig = {
-  apiKey: "AIzaSyCvFCp33X18zRx7DWxZ-k2EVo_K8ItFuS8",
-  authDomain: "productionr-2ca22.firebaseapp.com",
-  projectId: "productionr-2ca22",
-  storageBucket: "productionr-2ca22.firebasestorage.app",
-  messagingSenderId: "550974432860",
-  appId: "1:550974432860:web:a003243c7ae9042ee0e899"
+  apiKey: "AIzaSyB_tgkmCtOKSZxxrH2zpMJROcg3ICvWMm8",
+  authDomain: "plant-operation.firebaseapp.com",
+  projectId: "plant-operation",
+  storageBucket: "plant-operation.firebasestorage.app",
+  messagingSenderId: "63714104008",
+  appId: "1:63714104008:web:8bdbcc4938b528e0fdcbfd"
 };
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
@@ -290,7 +290,11 @@ function subscribePlants(){
   if(plantsUnsub) plantsUnsub();
   if(currentRole==='admin'){
     plantsUnsub = db.collection('plants').onSnapshot(snap=>{
-      plants = snap.docs.map(d=>normalizePlant(d.id,d.data()));
+      // Firestore does not guarantee document order without an explicit
+      // orderBy(), so plants can otherwise come back in a seemingly random
+      // order. Sort by name (numeric-aware, so "Plant 2" < "Plant 10").
+      plants = snap.docs.map(d=>normalizePlant(d.id,d.data()))
+        .sort((a,b)=>a.name.localeCompare(b.name, undefined, {numeric:true, sensitivity:'base'}));
       if(!activePlantId && plants.length) activePlantId = plants[0].id;
       if(activePlantId) subscribePlantData(activePlantId);
       render();
