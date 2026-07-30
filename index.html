@@ -31,7 +31,7 @@
   .login-card .field input{width:100%;}
   .login-err{color:var(--bad);font-size:12px;font-family:'JetBrains Mono';margin-bottom:10px;min-height:14px;}
 
-  header{display:flex;align-items:center;justify-content:space-between;padding:14px 26px;border-bottom:2px solid var(--amber);background:linear-gradient(180deg,#202226,#1B1D21);}
+  header{display:flex;align-items:center;justify-content:space-between;padding:14px 26px;border-bottom:2px solid var(--amber);background:linear-gradient(180deg,#202226,#1B1D21);position:sticky;top:0;z-index:100;}
   header .brand{display:flex;align-items:center;gap:14px;}
   header .brand .mark{width:36px;height:36px;border:2px solid var(--amber);border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Oswald';font-weight:700;color:var(--amber);font-size:12px;}
   header h1{font-size:17px;color:var(--text);}
@@ -41,7 +41,7 @@
   .role-plant{background:rgba(91,155,213,.18);color:var(--info);}
 
   .layout{display:grid;grid-template-columns:250px 1fr;min-height:calc(100vh - 62px);}
-  aside{border-right:1px solid var(--line);background:var(--panel-3);padding:16px;}
+  aside{border-right:1px solid var(--line);background:var(--panel-3);padding:16px;position:sticky;top:66px;height:calc(100vh - 66px);overflow-y:auto;z-index:30;}
   aside h2{font-size:11px;color:var(--text-dim2);margin-bottom:10px;}
   .plant-card{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px;cursor:pointer;}
   .plant-card:hover{background:var(--panel-2);}
@@ -54,10 +54,10 @@
   .logout-btn{background:none;border:1px solid var(--line);color:var(--text-dim);padding:6px 12px;border-radius:var(--radius);cursor:pointer;font-family:'JetBrains Mono';font-size:11px;}
   .logout-btn:hover{border-color:var(--bad);color:var(--bad);}
 
-  main{padding:20px 28px 60px;overflow-x:auto;}
+  main{padding:20px 28px 60px;}
   .empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;height:60vh;color:var(--text-dim2);text-align:center;gap:8px;}
 
-  .workspace-head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:18px;flex-wrap:wrap;gap:10px;}
+  .workspace-head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:18px;flex-wrap:wrap;gap:10px;position:sticky;top:66px;z-index:40;background:var(--bg);padding-top:14px;}
   .workspace-head h1{font-size:21px;}
   .sub-line{font-size:11px;color:var(--text-dim2);margin-top:4px;font-family:'JetBrains Mono';}
 
@@ -138,7 +138,7 @@
   .line-group-header .lg-type{font-family:'JetBrains Mono';font-size:9.5px;color:var(--text-dim2);text-transform:uppercase;letter-spacing:1px;}
   .line-group table{margin-top:-1px;}
 
-  .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;}
+  .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:200;padding:20px;}
   .modal{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:20px;width:460px;max-height:86vh;overflow-y:auto;}
   .modal.wide{width:720px;}
   .modal h3{margin-bottom:12px;font-size:14px;}
@@ -163,6 +163,8 @@
   @media (max-width:900px){
     .layout{grid-template-columns:1fr;}
     .stat-grid,.gauge-row{grid-template-columns:repeat(2,1fr);}
+    aside{position:static;height:auto;overflow-y:visible;}
+    .workspace-head{position:static;}
   }
 </style>
 </head>
@@ -209,12 +211,12 @@
    → General → Your apps → SDK setup and configuration).
    ============================================================ */
 const firebaseConfig = {
-  apiKey: "AIzaSyCvFCp33X18zRx7DWxZ-k2EVo_K8ItFuS8",
-  authDomain: "productionr-2ca22.firebaseapp.com",
-  projectId: "productionr-2ca22",
-  storageBucket: "productionr-2ca22.firebasestorage.app",
-  messagingSenderId: "550974432860",
-  appId: "1:550974432860:web:a003243c7ae9042ee0e899"
+  apiKey: "AIzaSyB_tgkmCtOKSZxxrH2zpMJROcg3ICvWMm8",
+  authDomain: "plant-operation.firebaseapp.com",
+  projectId: "plant-operation",
+  storageBucket: "plant-operation.firebasestorage.app",
+  messagingSenderId: "63714104008",
+  appId: "1:63714104008:web:8bdbcc4938b528e0fdcbfd"
 };
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
@@ -404,7 +406,7 @@ async function loadDefaultStructure(){
     });
   }
 }
-function selectPlant(id){ activePlantId=id; activeTab='shift'; adminView=null; subscribePlantData(id); render(); }
+function selectPlant(id){ activePlantId=id; adminView=null; subscribePlantData(id); render(); }
 function setTab(t){ activeTab=t; adminView=null; render(); }
 function openAdminView(v){ adminView=v; render(); }
 
