@@ -211,12 +211,12 @@
    → General → Your apps → SDK setup and configuration).
    ============================================================ */
 const firebaseConfig = {
-  apiKey: "AIzaSyCvFCp33X18zRx7DWxZ-k2EVo_K8ItFuS8",
-  authDomain: "productionr-2ca22.firebaseapp.com",
-  projectId: "productionr-2ca22",
-  storageBucket: "productionr-2ca22.firebasestorage.app",
-  messagingSenderId: "550974432860",
-  appId: "1:550974432860:web:a003243c7ae9042ee0e899"
+  apiKey: "AIzaSyB_tgkmCtOKSZxxrH2zpMJROcg3ICvWMm8",
+  authDomain: "plant-operation.firebaseapp.com",
+  projectId: "plant-operation",
+  storageBucket: "plant-operation.firebasestorage.app",
+  messagingSenderId: "63714104008",
+  appId: "1:63714104008:web:8bdbcc4938b528e0fdcbfd"
 };
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
@@ -1119,15 +1119,24 @@ function renderShiftTable(plant){
       </div>`;
   }).join('') : `<div class="no-data">No lines set up for this facility.</div>`;
 }
+function currentDraftBagWeight(){
+  const plant = currentPlant();
+  if(!plant) return 0;
+  const variantId = document.getElementById('s_variant')?.value;
+  const variant = variantObj(plant, variantId);
+  return variant ? (variant.bagWeight||0) : 0;
+}
 function renderQualityRows(){
   const wrap = document.getElementById('qualityRows');
   if(!wrap) return;
   if(!draftQuality.length){ wrap.innerHTML = `<div style="color:var(--text-dim2);font-size:12px;">No quality issues added for this shift.</div>`; return; }
+  const bagWeight = currentDraftBagWeight();
   wrap.innerHTML = draftQuality.map((q,i)=>`
     <div class="sub-block">
       <div class="grid-row"><div class="field" style="width:100%;"><label>Issue (free text)</label><input type="text" value="${esc(q.issue)}" onchange="updateQuality(${i},'issue',this.value)" placeholder="e.g. Excess fines in batch"></div></div>
       <div class="grid-row" style="margin-top:8px;">
-        <div class="field"><label>Qty Affected (kg)</label><input type="number" value="${q.qty}" onchange="updateQuality(${i},'qty',this.value)"></div>
+        <div class="field"><label>Qty Affected (bags)</label><input type="number" value="${q.qtyBags||0}" oninput="updateQuality(${i},'qtyBags',this.value)"></div>
+        <div class="field"><label>≈ Weight (kg)</label><input type="text" id="qtyKgPreview_${i}" value="${fmt((q.qtyBags||0)*bagWeight)}" disabled style="opacity:0.65;background:#141618;"></div>
         <div class="field" style="flex:1;"><label>Root Cause</label><input type="text" value="${esc(q.rootCause)}" onchange="updateQuality(${i},'rootCause',this.value)"></div>
       </div>
       <div class="grid-row" style="margin-top:8px;">
@@ -1142,9 +1151,17 @@ function renderQualityRows(){
       </div>
     </div>`).join('');
 }
-function addQualityRow(){ draftQuality.push({issue:'',qty:0,rootCause:'',action:'',effectiveness:'Pending'}); renderQualityRows(); }
+function addQualityRow(){ draftQuality.push({issue:'',qtyBags:0,rootCause:'',action:'',effectiveness:'Pending'}); renderQualityRows(); }
 function removeQualityRow(i){ draftQuality.splice(i,1); renderQualityRows(); }
-function updateQuality(i,key,val){ draftQuality[i][key] = key==='qty' ? (parseFloat(val)||0) : val; }
+function updateQuality(i,key,val){
+  draftQuality[i][key] = key==='qtyBags' ? (parseFloat(val)||0) : val;
+  if(key==='qtyBags'){
+    // Update just the kg preview text in place — avoid re-rendering the whole
+    // list, which would blow away the input's focus/cursor mid-keystroke.
+    const preview = document.getElementById('qtyKgPreview_'+i);
+    if(preview) preview.value = fmt(draftQuality[i].qtyBags * currentDraftBagWeight());
+  }
+}
 
 function updatePlannedHoursFromRequest(){
   const plant = currentPlant();
@@ -1176,6 +1193,7 @@ function updatePlannedHoursFromRequest(){
     plannedEl.style.background = '';
     if(!plannedEl.value || parseFloat(plannedEl.value)===0) plannedEl.value = plant.shiftHours;
   }
+  if(document.getElementById('qualityRows')) renderQualityRows();
 }
 function updateActualOutputPreview(){
   const v = id=>parseFloat(document.getElementById(id)?.value)||0;
@@ -1217,7 +1235,7 @@ async function submitShift(plantId){
     motorLoadAmp: parseFloat(g('s_amp').value)||0, voltage: parseFloat(g('s_volt').value)||0,
     powerFactor: parseFloat(g('s_pf').value)||0, efficiency: parseFloat(g('s_eff').value)||0,
     feedrateTonHr: parseFloat(g('s_feedrate').value)||0,
-    quality: draftQuality.filter(q=>q.issue.trim()!==''),
+    quality: draftQuality.filter(q=>q.issue.trim()!=='').map(q=>({...q, qtyKg:(q.qtyBags||0)*variantObj(plant,variantId).bagWeight})),
     createdAt: Date.now()
   };
   await db.collection('plants').doc(plantId).collection('shifts').add(record);
@@ -1240,6 +1258,15 @@ const EDITABLE_SHIFT_FIELDS = [
 function detailOrField(label, value, editId, editMode){
   if(editMode) return `<div class="field"><label>${label}</label><input type="number" step="any" id="${editId}" value="${value!=null?value:0}"></div>`;
   return `<div class="detail-item"><div class="dl">${label}</div><div class="dv">${value}</div></div>`;
+}
+function jumpToShiftFromReport(shiftId){
+  activeTab = 'shift';
+  render();
+  if(shiftsCache.some(s=>s.id===shiftId)){
+    showShiftDetail(shiftId, false);
+  } else {
+    alert('Could not find that shift — it may have been deleted.');
+  }
 }
 function showShiftDetail(shiftId, editMode){
   const plant = currentPlant();
@@ -1312,7 +1339,7 @@ function showShiftDetail(shiftId, editMode){
           <div class="detail-item"><div class="dl">Quality</div><div class="dv">${m.qualityRate.toFixed(1)}%</div></div>
           <div class="detail-item"><div class="dl">OEE</div><div class="dv"><span class="badge ${oc.cls}">${m.oee.toFixed(1)}% — ${oc.label}</span></div></div>
         </div>
-        ${(s.quality&&s.quality.length) ? `<div class="group-title">Quality Issues</div>` + s.quality.map(q=>`<div class="sub-block"><b>${esc(q.issue)}</b> — ${fmt(q.qty)} kg<br><span style="color:var(--text-dim2);">Root cause: ${esc(q.rootCause)} · Action: ${esc(q.action)} · ${q.effectiveness}</span></div>`).join('') : ''}
+        ${(s.quality&&s.quality.length) ? `<div class="group-title">Quality Issues</div>` + s.quality.map(q=>`<div class="sub-block"><b>${esc(q.issue)}</b> — ${q.qtyBags!=null?fmt(q.qtyBags)+' bags / ':''}${fmt(q.qtyKg!=null?q.qtyKg:(q.qty||0))} kg<br><span style="color:var(--text-dim2);">Root cause: ${esc(q.rootCause)} · Action: ${esc(q.action)} · ${q.effectiveness}</span></div>`).join('') : ''}
         <div class="modal-actions">
           ${editMode
             ? `<button class="btn ghost" onclick="showShiftDetail('${s.id}', false)">Cancel</button><button class="btn" onclick="saveShiftEdit('${plant.id}','${s.id}')">Save Changes</button>`
@@ -1612,7 +1639,7 @@ function buildReport(plantId, ym, lineFilter){
     return out;
   })();
   const allIssues = [];
-  shiftList.forEach(s=>(s.quality||[]).forEach(q=>allIssues.push({...q,date:s.date,shift:s.shiftLabel,line:lineName(plant,s.lineId),variant:variantName(plant,s.variantId)})));
+  shiftList.forEach(s=>(s.quality||[]).forEach(q=>allIssues.push({...q,date:s.date,shift:s.shiftLabel,line:lineName(plant,s.lineId),variant:variantName(plant,s.variantId),shiftId:s.id})));
   const totalRejected = metrics.reduce((a,x)=>a+x.m.rejectKg,0);
   const totalOutputAll = metrics.reduce((a,x)=>a+x.m.totalOutputKg,0);
   const rejectByVariant = groupSum(metrics, x=>variantName(plant,x.s.variantId), x=>x.m.rejectKg);
@@ -1692,12 +1719,17 @@ function buildReport(plantId, ym, lineFilter){
       </table>
       <div class="calc-note">Target Feedrate (ton/hr) = 3,600 ÷ Ideal Cycle Time (s/kg) ÷ 1,000, averaged across the specific Line + Variant combinations actually run this month.</div>
       <div class="panel-title" style="margin-top:16px;">C. Quality Issues &amp; Root Cause Analysis</div>
-      <table><thead><tr><th>Date</th><th>Shift</th><th>Line</th><th>Variant</th><th>Issue</th><th class="num">Qty (kg)</th><th>Root Cause</th></tr></thead>
-        <tbody>${allIssues.length ? allIssues.map(q=>`<tr><td>${q.date}</td><td>${q.shift}</td><td>${esc(q.line)}</td><td>${esc(q.variant)}</td><td>${esc(q.issue)}</td><td class="num">${fmt(q.qty)}</td><td>${esc(q.rootCause)}</td></tr>`).join('') : `<tr><td colspan="7" class="no-data">No quality issues logged.</td></tr>`}</tbody>
+      <table><thead><tr><th>Date</th><th>Shift</th><th>Line</th><th>Variant</th><th>Issue</th><th class="num">Qty (bags)</th><th class="num">Qty (kg)</th><th>Root Cause</th></tr></thead>
+        <tbody>${allIssues.length ? allIssues.map(q=>`<tr><td>${q.date}</td><td>${q.shift}</td><td>${esc(q.line)}</td><td>${esc(q.variant)}</td><td>${esc(q.issue)}</td><td class="num">${q.qtyBags!=null?fmt(q.qtyBags):'—'}</td><td class="num">${fmt(q.qtyKg!=null?q.qtyKg:(q.qty||0))}</td><td>${esc(q.rootCause)}</td></tr>`).join('') : `<tr><td colspan="8" class="no-data">No quality issues logged.</td></tr>`}</tbody>
       </table>
       <div class="panel-title" style="margin-top:16px;">D. Corrective Actions and Effectiveness</div>
+      <div class="calc-note" style="margin-bottom:8px;">Rows not yet marked "Effective" are clickable — click one to jump to that shift's log entry.</div>
       <table><thead><tr><th>Date</th><th>Issue</th><th>Corrective Action</th><th>Effectiveness</th></tr></thead>
-        <tbody>${allIssues.length ? allIssues.map(q=>`<tr><td>${q.date}</td><td>${esc(q.issue)}</td><td>${esc(q.action)}</td><td><span class="badge ${q.effectiveness==='Effective'?'badge-good':q.effectiveness==='Partially Effective'?'badge-mid':q.effectiveness==='Not Effective'?'badge-bad':'badge-dim'}">${q.effectiveness}</span></td></tr>`).join('') : `<tr><td colspan="4" class="no-data">No corrective actions logged.</td></tr>`}</tbody>
+        <tbody>${allIssues.length ? allIssues.map(q=>{
+          const needsFollowUp = q.effectiveness!=='Effective';
+          const rowAttrs = needsFollowUp ? `class="clickable" onclick="jumpToShiftFromReport('${q.shiftId}')" title="Click to open this shift"` : '';
+          return `<tr ${rowAttrs}><td>${q.date}</td><td>${esc(q.issue)}</td><td>${esc(q.action)}</td><td><span class="badge ${q.effectiveness==='Effective'?'badge-good':q.effectiveness==='Partially Effective'?'badge-mid':q.effectiveness==='Not Effective'?'badge-bad':'badge-dim'}">${q.effectiveness}</span></td></tr>`;
+        }).join('') : `<tr><td colspan="4" class="no-data">No corrective actions logged.</td></tr>`}</tbody>
       </table>
       <div class="panel-title" style="margin-top:16px;">E. Total Finished Product Rejections</div>
       <div class="stat-grid">
