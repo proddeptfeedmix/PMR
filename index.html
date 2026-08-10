@@ -211,12 +211,12 @@
    → General → Your apps → SDK setup and configuration).
    ============================================================ */
 const firebaseConfig = {
-  apiKey: "AIzaSyCvFCp33X18zRx7DWxZ-k2EVo_K8ItFuS8",
-  authDomain: "productionr-2ca22.firebaseapp.com",
-  projectId: "productionr-2ca22",
-  storageBucket: "productionr-2ca22.firebasestorage.app",
-  messagingSenderId: "550974432860",
-  appId: "1:550974432860:web:a003243c7ae9042ee0e899"
+  apiKey: "AIzaSyB_tgkmCtOKSZxxrH2zpMJROcg3ICvWMm8",
+  authDomain: "plant-operation.firebaseapp.com",
+  projectId: "plant-operation",
+  storageBucket: "plant-operation.firebasestorage.app",
+  messagingSenderId: "63714104008",
+  appId: "1:63714104008:web:8bdbcc4938b528e0fdcbfd"
 };
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
@@ -238,6 +238,7 @@ let lastShiftDate = todayLocalStr();
 let lastShiftLabel = 'Day';
 let plantsUnsub=null, shiftsUnsub=null, diesUnsub=null, batchesUnsub=null;
 let draftQuality = [];
+let draftFollowUps = []; // new follow-up corrective actions being added in Edit mode (appended on save, never replaces history)
 let userAccounts = [];       // roles collection cache (admin only)
 
 /* ---------------- AUTH ---------------- */
@@ -1275,33 +1276,79 @@ function showShiftDetail(shiftId, editMode){
   const m = shiftMetrics(s, plant);
   const oc = oeeClass(m.oee);
   const dryer = s.dryer||{};
+  if(editMode) draftFollowUps = [];
   const dryerItems = editMode
     ? Array.from({length:DRYER_ZONES},(_,i)=>i+1).map(i=>detailOrField('T'+i, dryer['t'+i], 'edit_dryer_t'+i, true)).join('')
     : Object.keys(dryer).map(k=>`<div class="detail-item"><div class="dl">${k.toUpperCase()}</div><div class="dv">${dryer[k]}</div></div>`).join('');
+
+  const basicInfoEdit = `
+    <div class="field"><label>Date</label><input type="date" id="edit_date" value="${s.date}"></div>
+    <div class="field"><label>Shift</label><select id="edit_shiftLabel"><option ${s.shiftLabel==='Day'?'selected':''}>Day</option><option ${s.shiftLabel==='Night'?'selected':''}>Night</option></select></div>
+    <div class="field"><label>Line</label><select id="edit_lineId" onchange="updateEditPlannedHoursFromRequest()">${(plant.lines||[]).map(l=>`<option value="${l.id}" ${l.id===s.lineId?'selected':''}>${esc(l.name)}</option>`).join('')}</select></div>
+    <div class="field"><label>Variant</label><select id="edit_variantId" onchange="updateEditPlannedHoursFromRequest()">${(plant.variants||[]).map(v=>`<option value="${v.id}" ${v.id===s.variantId?'selected':''}>${esc(v.name)}</option>`).join('')}</select></div>
+    <div class="field"><label>Recipe ID</label><input id="edit_recipeId" value="${esc(s.recipeId||'')}"></div>
+    <div class="field"><label>Order Details</label><select id="edit_orderDetails" onchange="updateEditPlannedHoursFromRequest()"><option ${s.orderDetails!=='Acc. to Request'?'selected':''}>Continuous Run</option><option ${s.orderDetails==='Acc. to Request'?'selected':''}>Acc. to Request</option></select></div>
+    <div class="field" id="edit_qtyRequestedField" style="display:${s.orderDetails==='Acc. to Request'?'flex':'none'};"><label>Qty. Requested (bags)</label><input type="number" id="edit_qtyRequested" value="${s.qtyRequested||0}" oninput="updateEditPlannedHoursFromRequest()"></div>
+    <div class="field" id="edit_actualRunTimeField" style="display:${s.orderDetails==='Acc. to Request'?'flex':'none'};"><label>Actual Run Time (hrs)</label><input type="number" step="0.1" id="edit_actualRunTime" value="${s.actualRunTime||0}"></div>
+    <div class="field"><label>Planned Hours</label><input type="number" id="edit_plannedHours" value="${s.plannedHours||0}" ${s.orderDetails==='Acc. to Request'?'readonly style="opacity:0.65;background:#141618;"':''}></div>
+    <div class="field"><label>Downtime (hrs)</label><input type="number" step="0.1" id="edit_downtimeHours" value="${s.downtimeHours||0}"></div>
+    <div class="field"><label>KG/HR Reading</label><input type="number" id="edit_kgHr" value="${s.kgHr||0}"></div>`;
+  const basicInfoView = `
+    <div class="detail-item"><div class="dl">Recipe ID</div><div class="dv">${esc(s.recipeId||'—')}</div></div>
+    <div class="detail-item"><div class="dl">Product</div><div class="dv">${m.variant?esc(m.variant.name):'—'}</div></div>
+    <div class="detail-item"><div class="dl">Order Details</div><div class="dv">${esc(s.orderDetails||'Continuous Run')}</div></div>
+    ${s.orderDetails==='Acc. to Request' ? `<div class="detail-item"><div class="dl">Qty. Requested</div><div class="dv">${fmt(s.qtyRequested)} bags</div></div><div class="detail-item"><div class="dl">Planned Hours</div><div class="dv">${fmt(s.plannedHours,2)} hrs</div></div><div class="detail-item"><div class="dl">Actual Run Time</div><div class="dv">${fmt(s.actualRunTime,1)} hrs</div></div>` : ''}
+    <div class="detail-item"><div class="dl">Run Hours</div><div class="dv">${m.runHours.toFixed(1)}</div></div>
+    <div class="detail-item"><div class="dl">Downtime</div><div class="dv">${s.downtimeHours} hrs</div></div>
+    <div class="detail-item"><div class="dl">KG/HR Reading</div><div class="dv">${fmt(s.kgHr)}</div></div>`;
+
+  const outputEdit = `
+    <div class="field"><label>Excellent</label><input type="number" id="edit_excellentBags" value="${s.excellentBags||0}" oninput="updateEditActualOutputPreview()"></div>
+    <div class="field"><label>Good</label><input type="number" id="edit_goodBags" value="${s.goodBags||0}" oninput="updateEditActualOutputPreview()"></div>
+    <div class="field"><label>Project</label><input type="number" id="edit_projectBags" value="${s.projectBags||0}" oninput="updateEditActualOutputPreview()"></div>
+    <div class="field"><label>Reject</label><input type="number" id="edit_rejectBags" value="${s.rejectBags||0}" oninput="updateEditActualOutputPreview()"></div>
+    <div class="field"><label>Actual Output (bags)</label><input type="number" id="edit_actualOutputPreview" value="${m.actualOutputBags}" readonly style="opacity:0.65;background:#141618;"></div>`;
+  const outputView = `
+    <div class="detail-item"><div class="dl">Excellent</div><div class="dv">${fmt(s.excellentBags)}</div></div>
+    <div class="detail-item"><div class="dl">Good</div><div class="dv">${fmt(s.goodBags)}</div></div>
+    <div class="detail-item"><div class="dl">Project</div><div class="dv">${fmt(s.projectBags)}</div></div>
+    <div class="detail-item"><div class="dl">Reject</div><div class="dv">${fmt(s.rejectBags)}</div></div>
+    <div class="detail-item"><div class="dl">Actual Output</div><div class="dv">${fmt(m.actualOutputBags)} bags</div></div>
+    <div class="detail-item"><div class="dl">Good Output (Excellent+Good)</div><div class="dv">${fmt(m.goodOutputKg)} kg</div></div>`;
+
+  const powerEdit = `
+    <div class="field"><label>Motor Load (Amp)</label><input type="number" id="edit_motorLoadAmp" value="${s.motorLoadAmp||0}"></div>
+    <div class="field"><label>Voltage (V)</label><input type="number" id="edit_voltage" value="${s.voltage||0}"></div>
+    <div class="field"><label>Power Factor</label><input type="number" step="0.01" id="edit_powerFactor" value="${s.powerFactor||0}"></div>
+    <div class="field"><label>Efficiency</label><input type="number" step="0.01" id="edit_efficiency" value="${s.efficiency||0}"></div>
+    <div class="field"><label>Feedrate (Ton/hr)</label><input type="number" step="0.001" id="edit_feedrateTonHr" value="${s.feedrateTonHr||0}"></div>`;
+  const powerView = `
+    <div class="detail-item"><div class="dl">Motor Load</div><div class="dv">${s.motorLoadAmp} A</div></div>
+    <div class="detail-item"><div class="dl">Voltage</div><div class="dv">${s.voltage} V</div></div>
+    <div class="detail-item"><div class="dl">Power Factor</div><div class="dv">${s.powerFactor}</div></div>
+    <div class="detail-item"><div class="dl">Efficiency</div><div class="dv">${s.efficiency}</div></div>
+    <div class="detail-item"><div class="dl">Power</div><div class="dv">${m.power.toFixed(2)} kW</div></div>
+    <div class="detail-item"><div class="dl">Feedrate</div><div class="dv">${s.feedrateTonHr} t/hr</div></div>
+    <div class="detail-item"><div class="dl">SME</div><div class="dv">${m.sme.toFixed(2)} kWh/t</div></div>
+    <div class="detail-item"><div class="dl">Ideal Cycle Time</div><div class="dv">${m.ict} s/kg</div></div>`;
+
+  const followUps = s.followUps||[];
+  const followUpBadge = f=>`<span class="badge ${f.effectiveness==='Effective'?'badge-good':f.effectiveness==='Partially Effective'?'badge-mid':f.effectiveness==='Not Effective'?'badge-bad':'badge-dim'}">${f.effectiveness}</span>`;
+  const followUpSection = (followUps.length || editMode) ? `
+    <div class="group-title">Follow-Up Corrective Actions</div>
+    ${followUps.map(f=>`<div class="sub-block">${esc(f.action)} ${followUpBadge(f)}</div>`).join('') || (editMode?'':'<div class="no-data">No follow-ups logged yet.</div>')}
+    ${editMode ? `<div id="followUpRows"></div><button class="btn small" style="background:var(--panel-2);color:var(--amber);border:1px dashed var(--amber-dim);margin-top:8px;" onclick="addFollowUpRow()">+ Add Follow-Up</button>` : ''}
+  ` : '';
+
   document.getElementById('modalRoot').innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
       <div class="modal wide">
-        <h3>${s.date} — ${s.shiftLabel} Shift — ${esc(lineName(plant,s.lineId))} ${editMode?'<span style=\"color:var(--amber);font-size:12px;\">(Editing)</span>':''}</h3>
-        <div class="group-title">Basic Info</div>
-        <div class="detail-grid">
-          <div class="detail-item"><div class="dl">Recipe ID</div><div class="dv">${esc(s.recipeId||'—')}</div></div>
-          <div class="detail-item"><div class="dl">Product</div><div class="dv">${m.variant?esc(m.variant.name):'—'}</div></div>
-          <div class="detail-item"><div class="dl">Order Details</div><div class="dv">${esc(s.orderDetails||'Continuous Run')}</div></div>
-          ${s.orderDetails==='Acc. to Request' ? `<div class="detail-item"><div class="dl">Qty. Requested</div><div class="dv">${fmt(s.qtyRequested)} bags</div></div><div class="detail-item"><div class="dl">Planned Hours</div><div class="dv">${fmt(s.plannedHours,2)} hrs</div></div><div class="detail-item"><div class="dl">Actual Run Time</div><div class="dv">${fmt(s.actualRunTime,1)} hrs</div></div>` : ''}
-          <div class="detail-item"><div class="dl">Run Hours</div><div class="dv">${m.runHours.toFixed(1)}</div></div>
-          <div class="detail-item"><div class="dl">Downtime</div><div class="dv">${s.downtimeHours} hrs</div></div>
-          <div class="detail-item"><div class="dl">KG/HR Reading</div><div class="dv">${fmt(s.kgHr)}</div></div>
-        </div>
-        <div class="group-title">Output by Grade (bags)</div>
-        <div class="detail-grid">
-          <div class="detail-item"><div class="dl">Excellent</div><div class="dv">${fmt(s.excellentBags)}</div></div>
-          <div class="detail-item"><div class="dl">Good</div><div class="dv">${fmt(s.goodBags)}</div></div>
-          <div class="detail-item"><div class="dl">Project</div><div class="dv">${fmt(s.projectBags)}</div></div>
-          <div class="detail-item"><div class="dl">Reject</div><div class="dv">${fmt(s.rejectBags)}</div></div>
-          <div class="detail-item"><div class="dl">Actual Output</div><div class="dv">${fmt(m.actualOutputBags)} bags</div></div>
-          <div class="detail-item"><div class="dl">Good Output (Excellent+Good)</div><div class="dv">${fmt(m.goodOutputKg)} kg</div></div>
-        </div>
-        <div class="group-title">Cylinder &amp; Extruder ${editMode?'<span style=\"color:var(--amber);\">— editable</span>':''}</div>
+        <h3>${s.date} — ${s.shiftLabel} Shift — ${esc(lineName(plant,s.lineId))} ${editMode?'<span style="color:var(--amber);font-size:12px;">(Editing)</span>':''}</h3>
+        <div class="group-title">Basic Info ${editMode?'<span style="color:var(--amber);">— editable</span>':''}</div>
+        <div class="${editMode?'field-grid':'detail-grid'}">${editMode?basicInfoEdit:basicInfoView}</div>
+        <div class="group-title">Output by Grade (bags) ${editMode?'<span style="color:var(--amber);">— editable</span>':''}</div>
+        <div class="${editMode?'field-grid':'detail-grid'}">${editMode?outputEdit:outputView}</div>
+        <div class="group-title">Cylinder &amp; Extruder ${editMode?'<span style="color:var(--amber);">— editable</span>':''}</div>
         <div class="${editMode?'field-grid':'detail-grid'}">
           ${detailOrField('Cylinder Steam', s.cylSteam, 'edit_cylSteam', editMode)}
           ${detailOrField('Cylinder Water', s.cylWater, 'edit_cylWater', editMode)}
@@ -1311,9 +1358,9 @@ function showShiftDetail(shiftId, editMode){
           ${detailOrField('Barrel T-2', s.barrel2, 'edit_barrel2', editMode)}
           ${detailOrField('Barrel T-3', s.barrel3, 'edit_barrel3', editMode)}
         </div>
-        <div class="group-title">Dryer Temperature (°C) ${editMode?'<span style=\"color:var(--amber);\">— editable</span>':''}</div>
+        <div class="group-title">Dryer Temperature (°C) ${editMode?'<span style="color:var(--amber);">— editable</span>':''}</div>
         <div class="${editMode?'field-grid':'detail-grid'}">${dryerItems}</div>
-        <div class="group-title">Bed Speed / Q.A. ${editMode?'<span style=\"color:var(--amber);\">— editable</span>':''}</div>
+        <div class="group-title">Bed Speed / Q.A. ${editMode?'<span style="color:var(--amber);">— editable</span>':''}</div>
         <div class="${editMode?'field-grid':'detail-grid'}">
           ${detailOrField('Bed Speed Top', s.bedTop, 'edit_bedTop', editMode)}
           ${detailOrField('Bed Speed Bottom', s.bedBottom, 'edit_bedBottom', editMode)}
@@ -1321,25 +1368,18 @@ function showShiftDetail(shiftId, editMode){
           ${detailOrField('Floating Eff (%)', s.floatEff, 'edit_floatEff', editMode)}
           ${detailOrField('Bulk Density', s.bulkDensity, 'edit_bulkDensity', editMode)}
         </div>
-        <div class="group-title">Power &amp; SME</div>
-        <div class="detail-grid">
-          <div class="detail-item"><div class="dl">Motor Load</div><div class="dv">${s.motorLoadAmp} A</div></div>
-          <div class="detail-item"><div class="dl">Voltage</div><div class="dv">${s.voltage} V</div></div>
-          <div class="detail-item"><div class="dl">Power Factor</div><div class="dv">${s.powerFactor}</div></div>
-          <div class="detail-item"><div class="dl">Efficiency</div><div class="dv">${s.efficiency}</div></div>
-          <div class="detail-item"><div class="dl">Power</div><div class="dv">${m.power.toFixed(2)} kW</div></div>
-          <div class="detail-item"><div class="dl">Feedrate</div><div class="dv">${s.feedrateTonHr} t/hr</div></div>
-          <div class="detail-item"><div class="dl">SME</div><div class="dv">${m.sme.toFixed(2)} kWh/t</div></div>
-          <div class="detail-item"><div class="dl">Ideal Cycle Time</div><div class="dv">${m.ict} s/kg</div></div>
-        </div>
+        <div class="group-title">Power &amp; SME ${editMode?'<span style="color:var(--amber);">— editable</span>':''}</div>
+        <div class="${editMode?'field-grid':'detail-grid'}">${editMode?powerEdit:powerView}</div>
+        ${!editMode ? `
         <div class="group-title">OEE Breakdown</div>
         <div class="detail-grid">
           <div class="detail-item"><div class="dl">Availability</div><div class="dv">${m.availability.toFixed(1)}%</div></div>
           <div class="detail-item"><div class="dl">Performance</div><div class="dv">${m.performance.toFixed(1)}%</div></div>
           <div class="detail-item"><div class="dl">Quality</div><div class="dv">${m.qualityRate.toFixed(1)}%</div></div>
           <div class="detail-item"><div class="dl">OEE</div><div class="dv"><span class="badge ${oc.cls}">${m.oee.toFixed(1)}% — ${oc.label}</span></div></div>
-        </div>
-        ${(s.quality&&s.quality.length) ? `<div class="group-title">Quality Issues</div>` + s.quality.map(q=>`<div class="sub-block"><b>${esc(q.issue)}</b> — ${q.qtyBags!=null?fmt(q.qtyBags)+' bags / ':''}${fmt(q.qtyKg!=null?q.qtyKg:(q.qty||0))} kg<br><span style="color:var(--text-dim2);">Root cause: ${esc(q.rootCause)} · Action: ${esc(q.action)} · ${q.effectiveness}</span></div>`).join('') : ''}
+        </div>` : `<div class="calc-note">OEE, Availability, Performance, Quality, Power and SME will recompute automatically from the values above once saved.</div>`}
+        ${(s.quality&&s.quality.length) ? `<div class="group-title">Quality Issues <span style="color:var(--text-dim2);font-weight:normal;">(not editable — use Follow-Up below to log new corrective attempts)</span></div>` + s.quality.map(q=>`<div class="sub-block"><b>${esc(q.issue)}</b> — ${q.qtyBags!=null?fmt(q.qtyBags)+' bags / ':''}${fmt(q.qtyKg!=null?q.qtyKg:(q.qty||0))} kg<br><span style="color:var(--text-dim2);">Root cause: ${esc(q.rootCause)} · Action: ${esc(q.action)} · ${q.effectiveness}</span></div>`).join('') : ''}
+        ${followUpSection}
         <div class="modal-actions">
           ${editMode
             ? `<button class="btn ghost" onclick="showShiftDetail('${s.id}', false)">Cancel</button><button class="btn" onclick="saveShiftEdit('${plant.id}','${s.id}')">Save Changes</button>`
@@ -1347,21 +1387,109 @@ function showShiftDetail(shiftId, editMode){
         </div>
       </div>
     </div>`;
+  if(editMode) renderFollowUpRows();
 }
+function updateEditActualOutputPreview(){
+  const v = id=>parseFloat(document.getElementById(id)?.value)||0;
+  const total = v('edit_excellentBags')+v('edit_goodBags')+v('edit_projectBags')+v('edit_rejectBags');
+  const el = document.getElementById('edit_actualOutputPreview');
+  if(el) el.value = total;
+}
+function updateEditPlannedHoursFromRequest(){
+  const plant = currentPlant();
+  if(!plant) return;
+  const orderType = document.getElementById('edit_orderDetails')?.value;
+  const qtyWrap = document.getElementById('edit_qtyRequestedField');
+  const runTimeWrap = document.getElementById('edit_actualRunTimeField');
+  const plannedEl = document.getElementById('edit_plannedHours');
+  if(!plannedEl) return;
+  if(orderType === 'Acc. to Request'){
+    if(qtyWrap) qtyWrap.style.display='flex';
+    if(runTimeWrap) runTimeWrap.style.display='flex';
+    const lineId = document.getElementById('edit_lineId')?.value;
+    const variantId = document.getElementById('edit_variantId')?.value;
+    const variant = variantObj(plant, variantId);
+    const bagWeight = variant ? (variant.bagWeight||0) : 0;
+    const ict = (plant.ict||{})[lineId+'_'+variantId] || 0;
+    const qty = parseFloat(document.getElementById('edit_qtyRequested')?.value)||0;
+    const plannedHours = (ict>0 && bagWeight>0 && qty>0) ? ((qty*bagWeight) / ((1/ict)*3600)) : 0;
+    plannedEl.value = plannedHours.toFixed(2);
+    plannedEl.readOnly = true;
+    plannedEl.style.opacity = '0.65';
+    plannedEl.style.background = '#141618';
+  } else {
+    if(qtyWrap) qtyWrap.style.display='none';
+    if(runTimeWrap) runTimeWrap.style.display='none';
+    plannedEl.readOnly = false;
+    plannedEl.style.opacity = '';
+    plannedEl.style.background = '';
+  }
+}
+function renderFollowUpRows(){
+  const wrap = document.getElementById('followUpRows');
+  if(!wrap) return;
+  if(!draftFollowUps.length){ wrap.innerHTML = ''; return; }
+  wrap.innerHTML = draftFollowUps.map((f,i)=>`
+    <div class="sub-block" style="margin-top:8px;">
+      <div class="grid-row">
+        <div class="field" style="flex:1;"><label>Corrective Action</label><input type="text" value="${esc(f.action)}" onchange="updateFollowUp(${i},'action',this.value)" placeholder="e.g. Replaced worn die"></div>
+        <div class="field"><label>Effectiveness</label><select onchange="updateFollowUp(${i},'effectiveness',this.value)">
+          <option ${f.effectiveness==='Pending'?'selected':''}>Pending</option>
+          <option ${f.effectiveness==='Effective'?'selected':''}>Effective</option>
+          <option ${f.effectiveness==='Partially Effective'?'selected':''}>Partially Effective</option>
+          <option ${f.effectiveness==='Not Effective'?'selected':''}>Not Effective</option>
+        </select></div>
+        <button class="del-btn" onclick="removeFollowUpRow(${i})" style="align-self:center;">✕</button>
+      </div>
+    </div>`).join('');
+}
+function addFollowUpRow(){ draftFollowUps.push({action:'',effectiveness:'Pending'}); renderFollowUpRows(); }
+function removeFollowUpRow(i){ draftFollowUps.splice(i,1); renderFollowUpRows(); }
+function updateFollowUp(i,key,val){ draftFollowUps[i][key]=val; }
 async function saveShiftEdit(plantId, shiftId){
-  const v = id=>{ const el=document.getElementById(id); return el ? (parseFloat(el.value)||0) : 0; };
+  const g = id=>document.getElementById(id);
+  const v = id=>{ const el=g(id); return el ? (parseFloat(el.value)||0) : 0; };
+  const plant = currentPlant();
+  const existingShift = shiftsCache.find(x=>x.id===shiftId);
+  if(!existingShift){ alert('Could not find this shift — it may have been deleted.'); closeModal(); return; }
+
+  const lineId = g('edit_lineId').value, variantId = g('edit_variantId').value;
+  if(!lineId || !variantId || !lineObj(plant,lineId) || !variantObj(plant,variantId)){
+    alert('Please select a valid Line and Variant.');
+    return;
+  }
+
   const dryer = {};
   for(let i=1;i<=DRYER_ZONES;i++) dryer['t'+i] = v('edit_dryer_t'+i);
+
+  const orderDetails = g('edit_orderDetails').value;
+  const newFollowUps = draftFollowUps.filter(f=>f.action.trim()!=='');
+  const followUps = [...(existingShift.followUps||[]), ...newFollowUps];
+
   const updates = {
+    date: g('edit_date').value,
+    shiftLabel: g('edit_shiftLabel').value,
+    lineId, variantId,
+    recipeId: g('edit_recipeId').value,
+    orderDetails,
+    qtyRequested: orderDetails==='Acc. to Request' ? v('edit_qtyRequested') : 0,
+    actualRunTime: orderDetails==='Acc. to Request' ? v('edit_actualRunTime') : 0,
+    plannedHours: v('edit_plannedHours'),
+    downtimeHours: v('edit_downtimeHours'),
+    kgHr: v('edit_kgHr'),
+    excellentBags: v('edit_excellentBags'), goodBags: v('edit_goodBags'), projectBags: v('edit_projectBags'), rejectBags: v('edit_rejectBags'),
     cylSteam:v('edit_cylSteam'), cylWater:v('edit_cylWater'), extSteam:v('edit_extSteam'), extWater:v('edit_extWater'),
     barrel1:v('edit_barrel1'), barrel2:v('edit_barrel2'), barrel3:v('edit_barrel3'),
     bedTop:v('edit_bedTop'), bedBottom:v('edit_bedBottom'),
     moisture:v('edit_moisture'), floatEff:v('edit_floatEff'), bulkDensity:v('edit_bulkDensity'),
-    dryer
+    motorLoadAmp:v('edit_motorLoadAmp'), voltage:v('edit_voltage'), powerFactor:v('edit_powerFactor'), efficiency:v('edit_efficiency'), feedrateTonHr:v('edit_feedrateTonHr'),
+    dryer, followUps
   };
   await db.collection('plants').doc(plantId).collection('shifts').doc(shiftId).update(updates);
+  draftFollowUps = [];
   closeModal();
 }
+
 
 /* ---------------- BATCH PERFORMANCE TAB ---------------- */
 function renderBatchTab(plant){
@@ -1686,6 +1814,26 @@ function buildReport(plantId, ym, lineFilter){
   const avgLifeHours = retiredDies.length ? avg(retiredDies.map(s=>s.totalRunningHours)) : 0;
   const avgLifeTons = retiredDies.length ? avg(retiredDies.map(s=>s.totalThroughputTons)) : 0;
 
+  // Group shifts by Line -> Variant for sections 2B, 2C, 2D — each line/variant
+  // combination gets its own feedrate, quality issues, and corrective actions,
+  // instead of blending different variants (or lines) together.
+  const lineVariantGroups = linesInScope.map(l=>{
+    const lm = metrics.filter(x=>x.s.lineId===l.id);
+    if(!lm.length) return null;
+    const variantIdsUsed = [...new Set(lm.map(x=>x.s.variantId))];
+    const variantRows = variantIdsUsed.map(vid=>{
+      const vm = lm.filter(x=>x.s.variantId===vid);
+      if(!vm.length) return null;
+      const variant = variantObj(plant, vid);
+      const avgActualFeedrate = avg(vm.map(x=>x.s.feedrateTonHr||0));
+      const ict = (plant.ict||{})[l.id+'_'+vid] || 0;
+      const targetFeedrate = ict>0 ? ((3600/ict)/1000) : 0;
+      const issuesHere = allIssues.filter(q=>vm.some(x=>x.s.id===q.shiftId));
+      return {variant, count:vm.length, avgActualFeedrate, targetFeedrate, issuesHere};
+    }).filter(Boolean);
+    return variantRows.length ? {line:l, variantRows} : null;
+  }).filter(Boolean);
+
   body.innerHTML = `
     <div class="panel">
       <h3 style="font-size:15px;margin-bottom:12px;"><span class="section-num">1.</span>Batch Performance Summary</h3>
@@ -1705,32 +1853,58 @@ function buildReport(plantId, ym, lineFilter){
       <div class="panel-title">A. Production Output by Variant (kg finished output)</div>
       <div class="calc-note" style="margin-bottom:8px;">Finished output = (Excellent + Good + Project) × Finished Product Weight per bag.</div>
       ${hbarTable(outputByVariant,'kg')}
-      <div class="panel-title" style="margin-top:16px;">B. Average Production Feedrate by Variant (ton/hr)</div>
-      <table>
-        <thead><tr><th>Variant</th><th class="num">Avg Actual (t/hr)</th><th class="num">Target (t/hr)</th><th class="num">vs Target</th></tr></thead>
-        <tbody>${Object.keys(feedrateByVariant).length ? Object.keys(feedrateByVariant).map(k=>{
-          const actual = feedrateByVariant[k];
-          const target = targetFeedrateByVariant[k]||0;
-          const diffPct = target>0 ? ((actual-target)/target*100) : null;
-          const diffLabel = diffPct==null ? 'target not set' : (diffPct>=0?'+':'')+diffPct.toFixed(1)+'%';
-          const diffCls = diffPct==null ? 'badge-dim' : (diffPct>=0?'badge-good':'badge-bad');
-          return `<tr><td>${esc(k)}</td><td class="num">${actual.toFixed(2)}</td><td class="num">${target>0?target.toFixed(2):'—'}</td><td class="num"><span class="badge ${diffCls}">${diffLabel}</span></td></tr>`;
-        }).join('') : `<tr><td colspan="4" class="no-data">No data available.</td></tr>`}</tbody>
-      </table>
-      <div class="calc-note">Target Feedrate (ton/hr) = 3,600 ÷ Ideal Cycle Time (s/kg) ÷ 1,000, averaged across the specific Line + Variant combinations actually run this month.</div>
-      <div class="panel-title" style="margin-top:16px;">C. Quality Issues &amp; Root Cause Analysis</div>
-      <table><thead><tr><th>Date</th><th>Shift</th><th>Line</th><th>Variant</th><th>Issue</th><th class="num">Qty (bags)</th><th class="num">Qty (kg)</th><th>Root Cause</th></tr></thead>
-        <tbody>${allIssues.length ? allIssues.map(q=>`<tr><td>${q.date}</td><td>${q.shift}</td><td>${esc(q.line)}</td><td>${esc(q.variant)}</td><td>${esc(q.issue)}</td><td class="num">${q.qtyBags!=null?fmt(q.qtyBags):'—'}</td><td class="num">${fmt(q.qtyKg!=null?q.qtyKg:(q.qty||0))}</td><td>${esc(q.rootCause)}</td></tr>`).join('') : `<tr><td colspan="8" class="no-data">No quality issues logged.</td></tr>`}</tbody>
-      </table>
-      <div class="panel-title" style="margin-top:16px;">D. Corrective Actions and Effectiveness</div>
-      <div class="calc-note" style="margin-bottom:8px;">Rows not yet marked "Effective" are clickable — click one to jump to that shift's log entry.</div>
-      <table><thead><tr><th>Date</th><th>Issue</th><th>Corrective Action</th><th>Effectiveness</th></tr></thead>
-        <tbody>${allIssues.length ? allIssues.map(q=>{
-          const needsFollowUp = q.effectiveness!=='Effective';
-          const rowAttrs = needsFollowUp ? `class="clickable" onclick="jumpToShiftFromReport('${q.shiftId}')" title="Click to open this shift"` : '';
-          return `<tr ${rowAttrs}><td>${q.date}</td><td>${esc(q.issue)}</td><td>${esc(q.action)}</td><td><span class="badge ${q.effectiveness==='Effective'?'badge-good':q.effectiveness==='Partially Effective'?'badge-mid':q.effectiveness==='Not Effective'?'badge-bad':'badge-dim'}">${q.effectiveness}</span></td></tr>`;
-        }).join('') : `<tr><td colspan="4" class="no-data">No corrective actions logged.</td></tr>`}</tbody>
-      </table>
+
+      <div class="panel-title" style="margin-top:16px;">B. Average Production Feedrate by Line + Variant (ton/hr)</div>
+      ${lineVariantGroups.length ? lineVariantGroups.map(g=>`
+        <div class="sub-block" style="margin-top:10px;">
+          <div style="font-size:11px;color:var(--amber);font-family:'JetBrains Mono';margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">${esc(g.line.name)} — ${esc(g.line.type)}</div>
+          <table>
+            <thead><tr><th>Variant</th><th class="num">Avg Actual (t/hr)</th><th class="num">Target (t/hr)</th><th class="num">vs Target</th></tr></thead>
+            <tbody>${g.variantRows.map(v=>{
+              const diffPct = v.targetFeedrate>0 ? ((v.avgActualFeedrate-v.targetFeedrate)/v.targetFeedrate*100) : null;
+              const diffLabel = diffPct==null ? 'target not set' : (diffPct>=0?'+':'')+diffPct.toFixed(1)+'%';
+              const diffCls = diffPct==null ? 'badge-dim' : (diffPct>=0?'badge-good':'badge-bad');
+              return `<tr><td>${v.variant?esc(v.variant.name):'—'}</td><td class="num">${v.avgActualFeedrate.toFixed(2)}</td><td class="num">${v.targetFeedrate>0?v.targetFeedrate.toFixed(2):'—'}</td><td class="num"><span class="badge ${diffCls}">${diffLabel}</span></td></tr>`;
+            }).join('')}</tbody>
+          </table>
+        </div>`).join('') : `<div class="no-data">No data available.</div>`}
+      <div class="calc-note">Target Feedrate (ton/hr) = 3,600 ÷ Ideal Cycle Time (s/kg) ÷ 1,000, specific to each Line + Variant combination.</div>
+
+      <div class="panel-title" style="margin-top:16px;">C. Quality Issues &amp; Root Cause Analysis — by Line + Variant</div>
+      ${lineVariantGroups.length ? lineVariantGroups.map(g=>`
+        <div class="sub-block" style="margin-top:10px;">
+          <div style="font-size:11px;color:var(--amber);font-family:'JetBrains Mono';margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">${esc(g.line.name)} — ${esc(g.line.type)}</div>
+          ${g.variantRows.map(v=>`
+            <div style="margin-bottom:12px;">
+              <div style="font-size:10.5px;color:var(--text-dim);font-family:'JetBrains Mono';margin-bottom:4px;">${v.variant?esc(v.variant.name):'—'}</div>
+              <table><thead><tr><th>Date</th><th>Shift</th><th>Issue</th><th class="num">Qty (bags)</th><th class="num">Qty (kg)</th><th>Root Cause</th></tr></thead>
+                <tbody>${v.issuesHere.length ? v.issuesHere.map(q=>`<tr><td>${q.date}</td><td>${q.shift}</td><td>${esc(q.issue)}</td><td class="num">${q.qtyBags!=null?fmt(q.qtyBags):'—'}</td><td class="num">${fmt(q.qtyKg!=null?q.qtyKg:(q.qty||0))}</td><td>${esc(q.rootCause)}</td></tr>`).join('') : `<tr><td colspan="6" class="no-data">No issues logged.</td></tr>`}</tbody>
+              </table>
+            </div>`).join('')}
+        </div>`).join('') : `<div class="no-data">No data available.</div>`}
+
+      <div class="panel-title" style="margin-top:16px;">D. Corrective Actions and Effectiveness — by Line + Variant</div>
+      <div class="calc-note" style="margin-bottom:8px;">Rows not yet "Effective", or with follow-up history, are clickable — click one to jump to that shift's log entry.</div>
+      ${lineVariantGroups.length ? lineVariantGroups.map(g=>`
+        <div class="sub-block" style="margin-top:10px;">
+          <div style="font-size:11px;color:var(--amber);font-family:'JetBrains Mono';margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">${esc(g.line.name)} — ${esc(g.line.type)}</div>
+          ${g.variantRows.map(v=>`
+            <div style="margin-bottom:12px;">
+              <div style="font-size:10.5px;color:var(--text-dim);font-family:'JetBrains Mono';margin-bottom:4px;">${v.variant?esc(v.variant.name):'—'}</div>
+              <table><thead><tr><th>Date</th><th>Issue</th><th>Corrective Action</th><th>Effectiveness</th></tr></thead>
+                <tbody>${v.issuesHere.length ? v.issuesHere.map(q=>{
+                  const shiftForIssue = shiftsCache.find(x=>x.id===q.shiftId);
+                  const followUps = (shiftForIssue && shiftForIssue.followUps) || [];
+                  const latestFollowUp = followUps.length ? followUps[followUps.length-1] : null;
+                  const needsClick = q.effectiveness!=='Effective' || followUps.length>0;
+                  const rowAttrs = needsClick ? `class="clickable" onclick="jumpToShiftFromReport('${q.shiftId}')" title="Click to open this shift"` : '';
+                  const badgeFor = eff => `<span class="badge ${eff==='Effective'?'badge-good':eff==='Partially Effective'?'badge-mid':eff==='Not Effective'?'badge-bad':'badge-dim'}">${eff}</span>`;
+                  const effDisplay = badgeFor(q.effectiveness) + (latestFollowUp ? ' → ' + badgeFor(latestFollowUp.effectiveness) : '');
+                  return `<tr ${rowAttrs}><td>${q.date}</td><td>${esc(q.issue)}</td><td>${esc(q.action)}</td><td>${effDisplay}</td></tr>`;
+                }).join('') : `<tr><td colspan="4" class="no-data">No corrective actions logged.</td></tr>`}</tbody>
+              </table>
+            </div>`).join('')}
+        </div>`).join('') : `<div class="no-data">No data available.</div>`}
       <div class="panel-title" style="margin-top:16px;">E. Total Finished Product Rejections</div>
       <div class="stat-grid">
         <div class="stat-card"><div class="label">Total Rejected</div><div class="value" style="color:var(--bad)">${fmt(totalRejected)}</div><div class="sub">kg this month</div></div>
