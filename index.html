@@ -1557,7 +1557,7 @@ function renderBatchTab(plant){
       <div style="margin-top:14px;"><button class="btn" onclick="submitBatch('${plant.id}')">Save Batch Entry</button></div>
     </div>
     <div class="panel">
-      <div class="panel-title">Logged Batches</div>
+      <div class="panel-title">Logged Batches (click a row for full parameters)</div>
       <div id="batchTableWrap"></div>
     </div>`;
   renderBatchTable(plant);
@@ -1569,12 +1569,12 @@ function renderBatchTable(plant){
   wrap.innerHTML = groups.length ? groups.map(g=>{
     const rows = g.items.map(b=>{
       const bm = batchMetrics(b, plant);
-      return `<tr>
+      return `<tr class="clickable" onclick="showBatchDetail('${b.id}')">
         <td>${b.date}</td><td>${esc(b.shiftLabel||'—')}</td><td>${esc(variantName(plant,b.variantId))}</td>
         <td class="num">${fmt(b.batchWeight)}</td><td class="num">${fmt(b.finesWeight!=null?b.finesWeight:0)}</td><td class="num">${fmt(bm.yieldWeight)}</td>
         <td class="num">${fmt(bm.rejectKg)}</td><td class="num">${fmt(b.finishedOutput)}</td>
         <td class="num">${bm.yieldPct.toFixed(1)}%</td><td class="num">${bm.recoveryPct.toFixed(1)}%</td>
-        <td class="num"><button class="del-btn" onclick="deleteBatch('${plant.id}','${b.id}')">✕</button></td>
+        <td class="num" onclick="event.stopPropagation()"><button class="del-btn" onclick="deleteBatch('${plant.id}','${b.id}')">✕</button></td>
       </tr>`;
     }).join('');
     return `
@@ -1612,6 +1612,78 @@ async function submitBatch(plantId){
 }
 async function deleteBatch(plantId, batchId){
   await db.collection('plants').doc(plantId).collection('batches').doc(batchId).delete();
+}
+function showBatchDetail(batchId, editMode){
+  const plant = currentPlant();
+  const b = batchesCache.find(x=>x.id===batchId);
+  if(!b) return;
+  const bm = batchMetrics(b, plant);
+
+  const basicInfoEdit = `
+    <div class="field"><label>Date</label><input type="date" id="editb_date" value="${b.date}"></div>
+    <div class="field"><label>Shift</label><select id="editb_shift"><option ${b.shiftLabel==='Day'?'selected':''}>Day</option><option ${b.shiftLabel==='Night'?'selected':''}>Night</option></select></div>
+    <div class="field"><label>Line</label><select id="editb_line">${(plant.lines||[]).map(l=>`<option value="${l.id}" ${l.id===b.lineId?'selected':''}>${esc(l.name)}</option>`).join('')}</select></div>
+    <div class="field"><label>Variant</label><select id="editb_variant">${(plant.variants||[]).map(v=>`<option value="${v.id}" ${v.id===b.variantId?'selected':''}>${esc(v.name)}</option>`).join('')}</select></div>
+    <div class="field"><label>Batch Weight (kg)</label><input type="number" id="editb_batchWeight" value="${b.batchWeight||0}"></div>
+    <div class="field"><label>Fines Weight (kg)</label><input type="number" id="editb_finesWeight" value="${b.finesWeight!=null?b.finesWeight:0}"></div>
+    <div class="field"><label>Reject (bags)</label><input type="number" id="editb_rejectBags" value="${b.rejectBags!=null?b.rejectBags:0}"></div>
+    <div class="field"><label>Finished Product Output (kg)</label><input type="number" id="editb_finished" value="${b.finishedOutput||0}"></div>`;
+  const basicInfoView = `
+    <div class="detail-item"><div class="dl">Date</div><div class="dv">${b.date}</div></div>
+    <div class="detail-item"><div class="dl">Shift</div><div class="dv">${esc(b.shiftLabel||'—')}</div></div>
+    <div class="detail-item"><div class="dl">Line</div><div class="dv">${esc(lineName(plant,b.lineId))}</div></div>
+    <div class="detail-item"><div class="dl">Variant</div><div class="dv">${esc(variantName(plant,b.variantId))}</div></div>
+    <div class="detail-item"><div class="dl">Batch Weight</div><div class="dv">${fmt(b.batchWeight)} kg</div></div>
+    <div class="detail-item"><div class="dl">Fines Weight</div><div class="dv">${fmt(b.finesWeight!=null?b.finesWeight:0)} kg</div></div>
+    <div class="detail-item"><div class="dl">Reject</div><div class="dv">${fmt(b.rejectBags!=null?b.rejectBags:0)} bags</div></div>
+    <div class="detail-item"><div class="dl">Finished Product Output</div><div class="dv">${fmt(b.finishedOutput)} kg</div></div>`;
+
+  document.getElementById('modalRoot').innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
+      <div class="modal wide">
+        <h3>${b.date} — ${esc(b.shiftLabel||'—')} Shift — ${esc(lineName(plant,b.lineId))} ${editMode?'<span style="color:var(--amber);font-size:12px;">(Editing)</span>':''}</h3>
+        <div class="group-title">Batch Details ${editMode?'<span style="color:var(--amber);">— editable</span>':''}</div>
+        <div class="${editMode?'field-grid':'detail-grid'}">${editMode?basicInfoEdit:basicInfoView}</div>
+        ${!editMode ? `
+        <div class="group-title">Calculated</div>
+        <div class="detail-grid">
+          <div class="detail-item"><div class="dl">Yield Weight</div><div class="dv">${fmt(bm.yieldWeight)} kg</div></div>
+          <div class="detail-item"><div class="dl">Reject (kg)</div><div class="dv">${fmt(bm.rejectKg)} kg</div></div>
+          <div class="detail-item"><div class="dl">Yield %</div><div class="dv">${bm.yieldPct.toFixed(1)}%</div></div>
+          <div class="detail-item"><div class="dl">Recovery %</div><div class="dv">${bm.recoveryPct.toFixed(1)}%</div></div>
+        </div>` : `<div class="calc-note">Yield Weight, Yield %, and Recovery % will recompute automatically from the values above once saved.</div>`}
+        <div class="modal-actions">
+          ${editMode
+            ? `<button class="btn ghost" onclick="showBatchDetail('${b.id}', false)">Cancel</button><button class="btn" onclick="saveBatchEdit('${plant.id}','${b.id}')">Save Changes</button>`
+            : `<button class="btn ghost" onclick="closeModal()">Close</button><button class="btn" onclick="showBatchDetail('${b.id}', true)">Edit Batch</button>`}
+        </div>
+      </div>
+    </div>`;
+}
+async function saveBatchEdit(plantId, batchId){
+  const g = id=>document.getElementById(id);
+  const v = id=>{ const el=g(id); return el ? (parseFloat(el.value)||0) : 0; };
+  const plant = currentPlant();
+  const existingBatch = batchesCache.find(x=>x.id===batchId);
+  if(!existingBatch){ alert('Could not find this batch — it may have been deleted.'); closeModal(); return; }
+
+  const date = g('editb_date').value;
+  if(!date){ alert('Enter a date.'); return; }
+  const lineId = g('editb_line').value, variantId = g('editb_variant').value;
+  if(!lineId || !variantId || !lineObj(plant,lineId) || !variantObj(plant,variantId)){
+    alert('Please select a valid Line and Variant.');
+    return;
+  }
+
+  const updates = {
+    date, shiftLabel: g('editb_shift').value, lineId, variantId,
+    batchWeight: v('editb_batchWeight'),
+    finesWeight: v('editb_finesWeight'),
+    rejectBags: v('editb_rejectBags'),
+    finishedOutput: v('editb_finished')
+  };
+  await db.collection('plants').doc(plantId).collection('batches').doc(batchId).update(updates);
+  closeModal();
 }
 
 /* ---------------- DIE LOG TAB ---------------- */
