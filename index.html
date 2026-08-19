@@ -881,6 +881,14 @@ function groupByLine(list, lines){
     return {line, items};
   });
 }
+function toggleQualityDetail(id, headerEl){
+  const el = document.getElementById(id);
+  if(!el) return;
+  const showing = el.style.display !== 'none';
+  el.style.display = showing ? 'none' : 'block';
+  const caret = headerEl.querySelector('.qdetail-caret');
+  if(caret) caret.style.transform = showing ? '' : 'rotate(90deg)';
+}
 function hbarTable(dataObj, unit, decimals){
   const entries = Object.entries(dataObj);
   if(!entries.length) return `<div class="no-data">No data available.</div>`;
@@ -1979,7 +1987,14 @@ function buildReport(plantId, ym, lineFilter){
       const ict = (plant.ict||{})[l.id+'_'+vid] || 0;
       const targetFeedrate = ict>0 ? ((3600/ict)/1000) : 0;
       const issuesHere = allIssues.filter(q=>vm.some(x=>x.s.id===q.shiftId));
-      return {variant, count:vm.length, avgActualFeedrate, targetFeedrate, issuesHere};
+      // Bar data: total qty (bags) per issue type, ordered to match the
+      // fixed dropdown order — only issue types that were actually logged
+      // for this line+variant show up as bars.
+      const issueBagTotals = {};
+      issuesHere.forEach(q=>{ issueBagTotals[q.issue] = (issueBagTotals[q.issue]||0) + (q.qtyBags||0); });
+      const issueBars = {};
+      QUALITY_ISSUE_OPTIONS.forEach(opt=>{ if(issueBagTotals[opt]!=null) issueBars[opt]=issueBagTotals[opt]; });
+      return {variant, count:vm.length, avgActualFeedrate, targetFeedrate, issuesHere, issueBars};
     }).filter(Boolean);
     return variantRows.length ? {line:l, variantRows} : null;
   }).filter(Boolean);
@@ -2024,13 +2039,22 @@ function buildReport(plantId, ym, lineFilter){
       ${lineVariantGroups.length ? lineVariantGroups.map(g=>`
         <div class="sub-block" style="margin-top:10px;">
           <div style="font-size:11px;color:var(--amber);font-family:'JetBrains Mono';margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">${esc(g.line.name)} — ${esc(g.line.type)}</div>
-          ${g.variantRows.map(v=>`
+          ${g.variantRows.map(v=>{
+            const detailId = 'qdetail_'+uid('');
+            return `
             <div style="margin-bottom:12px;">
-              <div style="font-size:10.5px;color:var(--text-dim);font-family:'JetBrains Mono';margin-bottom:4px;">${v.variant?esc(v.variant.name):'—'}</div>
-              <table><thead><tr><th>Date</th><th>Shift</th><th>Issue</th><th class="num">Qty (bags)</th><th class="num">Qty (kg)</th><th>Root Cause</th></tr></thead>
-                <tbody>${v.issuesHere.length ? v.issuesHere.map(q=>`<tr><td>${q.date}</td><td>${q.shift}</td><td>${esc(q.issue)}</td><td class="num">${q.qtyBags!=null?fmt(q.qtyBags):'—'}</td><td class="num">${fmt(q.qtyKg!=null?q.qtyKg:(q.qty||0))}</td><td>${esc(q.rootCause)}</td></tr>`).join('') : `<tr><td colspan="6" class="no-data">No issues logged.</td></tr>`}</tbody>
-              </table>
-            </div>`).join('')}
+              <div onclick="toggleQualityDetail('${detailId}', this)" style="cursor:pointer;font-size:10.5px;color:var(--text-dim);font-family:'JetBrains Mono';margin-bottom:4px;display:flex;align-items:center;gap:6px;">
+                <span class="qdetail-caret" style="display:inline-block;transition:transform 0.15s;">▶</span>${v.variant?esc(v.variant.name):'—'}
+                <span style="color:var(--text-dim2);font-weight:normal;">(click to view logged entries)</span>
+              </div>
+              ${Object.keys(v.issueBars).length ? hbarTable(v.issueBars,'bags') : `<div class="no-data">No issues logged.</div>`}
+              <div id="${detailId}" style="display:none;margin-top:8px;">
+                <table><thead><tr><th>Date</th><th>Shift</th><th>Issue</th><th class="num">Qty (bags)</th><th class="num">Qty (kg)</th><th>Root Cause</th></tr></thead>
+                  <tbody>${v.issuesHere.length ? v.issuesHere.map(q=>`<tr><td>${q.date}</td><td>${q.shift}</td><td>${esc(q.issue)}</td><td class="num">${q.qtyBags!=null?fmt(q.qtyBags):'—'}</td><td class="num">${fmt(q.qtyKg!=null?q.qtyKg:(q.qty||0))}</td><td>${esc(q.rootCause)}</td></tr>`).join('') : `<tr><td colspan="6" class="no-data">No issues logged.</td></tr>`}</tbody>
+                </table>
+              </div>
+            </div>`;
+          }).join('')}
         </div>`).join('') : `<div class="no-data">No data available.</div>`}
 
       <div class="panel-title" style="margin-top:16px;">D. Corrective Actions and Effectiveness — by Line + Variant</div>
