@@ -239,6 +239,7 @@ let lastShiftLabel = 'Day';
 let plantsUnsub=null, shiftsUnsub=null, diesUnsub=null, batchesUnsub=null;
 let draftQuality = [];
 let draftFollowUps = []; // new follow-up corrective actions being added in Edit mode (appended on save, never replaces history)
+let draftEditQuality = []; // existing shift's quality issues being edited in-place while in Edit Parameters mode
 let userAccounts = [];       // roles collection cache (admin only)
 
 /* ---------------- AUTH ---------------- */
@@ -351,7 +352,7 @@ function localDateStr(dt){
 function todayLocalStr(){ return localDateStr(new Date()); }
 function currentMonthLocalStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
 function esc(s){ const d=document.createElement('div'); d.textContent=s==null?'':s; return d.innerHTML; }
-function closeModal(){ document.getElementById('modalRoot').innerHTML=''; }
+function closeModal(){ document.getElementById('modalRoot').innerHTML=''; draftFollowUps=[]; draftEditQuality=[]; }
 function fmt(n,dec){ if(n==null||isNaN(n)) return '0'; return n.toLocaleString(undefined,{minimumFractionDigits:dec||0,maximumFractionDigits:dec||0}); }
 function currentPlant(){ return plants.find(p=>p.id===activePlantId); }
 function refreshDropdown(selectId, items){
@@ -1127,6 +1128,47 @@ function currentDraftBagWeight(){
   const variant = variantObj(plant, variantId);
   return variant ? (variant.bagWeight||0) : 0;
 }
+function currentEditDraftBagWeight(){
+  const plant = currentPlant();
+  if(!plant) return 0;
+  const variantId = document.getElementById('edit_variantId')?.value;
+  const variant = variantObj(plant, variantId);
+  return variant ? (variant.bagWeight||0) : 0;
+}
+function renderEditQualityRows(){
+  const wrap = document.getElementById('editQualityRows');
+  if(!wrap) return;
+  if(!draftEditQuality.length){ wrap.innerHTML = `<div style="color:var(--text-dim2);font-size:12px;">No quality issues logged for this shift.</div>`; return; }
+  const bagWeight = currentEditDraftBagWeight();
+  wrap.innerHTML = draftEditQuality.map((q,i)=>`
+    <div class="sub-block">
+      <div class="grid-row"><div class="field" style="width:100%;"><label>Issue (free text)</label><input type="text" value="${esc(q.issue)}" onchange="updateEditQuality(${i},'issue',this.value)" placeholder="e.g. Excess fines in batch"></div></div>
+      <div class="grid-row" style="margin-top:8px;">
+        <div class="field"><label>Qty Affected (bags)</label><input type="number" value="${q.qtyBags||0}" oninput="updateEditQuality(${i},'qtyBags',this.value)"></div>
+        <div class="field"><label>≈ Weight (kg)</label><input type="text" id="editQtyKgPreview_${i}" value="${fmt((q.qtyBags||0)*bagWeight)}" disabled style="opacity:0.65;background:#141618;"></div>
+        <div class="field" style="flex:1;"><label>Root Cause</label><input type="text" value="${esc(q.rootCause)}" onchange="updateEditQuality(${i},'rootCause',this.value)"></div>
+      </div>
+      <div class="grid-row" style="margin-top:8px;">
+        <div class="field" style="flex:1;"><label>Corrective Action</label><input type="text" value="${esc(q.action)}" onchange="updateEditQuality(${i},'action',this.value)"></div>
+        <div class="field"><label>Effectiveness</label><select onchange="updateEditQuality(${i},'effectiveness',this.value)">
+          <option ${q.effectiveness==='Pending'?'selected':''}>Pending</option>
+          <option ${q.effectiveness==='Effective'?'selected':''}>Effective</option>
+          <option ${q.effectiveness==='Partially Effective'?'selected':''}>Partially Effective</option>
+          <option ${q.effectiveness==='Not Effective'?'selected':''}>Not Effective</option>
+        </select></div>
+        <button class="del-btn" onclick="removeEditQualityRow(${i})" style="align-self:center;">✕</button>
+      </div>
+    </div>`).join('');
+}
+function addEditQualityRow(){ draftEditQuality.push({issue:'',qtyBags:0,rootCause:'',action:'',effectiveness:'Pending'}); renderEditQualityRows(); }
+function removeEditQualityRow(i){ draftEditQuality.splice(i,1); renderEditQualityRows(); }
+function updateEditQuality(i,key,val){
+  draftEditQuality[i][key] = key==='qtyBags' ? (parseFloat(val)||0) : val;
+  if(key==='qtyBags'){
+    const preview = document.getElementById('editQtyKgPreview_'+i);
+    if(preview) preview.value = fmt(draftEditQuality[i].qtyBags * currentEditDraftBagWeight());
+  }
+}
 function renderQualityRows(){
   const wrap = document.getElementById('qualityRows');
   if(!wrap) return;
@@ -1276,7 +1318,7 @@ function showShiftDetail(shiftId, editMode){
   const m = shiftMetrics(s, plant);
   const oc = oeeClass(m.oee);
   const dryer = s.dryer||{};
-  if(editMode) draftFollowUps = [];
+  if(editMode){ draftFollowUps = []; draftEditQuality = (s.quality||[]).map(q=>({...q})); }
   const dryerItems = editMode
     ? Array.from({length:DRYER_ZONES},(_,i)=>i+1).map(i=>detailOrField('T'+i, dryer['t'+i], 'edit_dryer_t'+i, true)).join('')
     : Object.keys(dryer).map(k=>`<div class="detail-item"><div class="dl">${k.toUpperCase()}</div><div class="dv">${dryer[k]}</div></div>`).join('');
@@ -1378,7 +1420,9 @@ function showShiftDetail(shiftId, editMode){
           <div class="detail-item"><div class="dl">Quality</div><div class="dv">${m.qualityRate.toFixed(1)}%</div></div>
           <div class="detail-item"><div class="dl">OEE</div><div class="dv"><span class="badge ${oc.cls}">${m.oee.toFixed(1)}% — ${oc.label}</span></div></div>
         </div>` : `<div class="calc-note">OEE, Availability, Performance, Quality, Power and SME will recompute automatically from the values above once saved.</div>`}
-        ${(s.quality&&s.quality.length) ? `<div class="group-title">Quality Issues <span style="color:var(--text-dim2);font-weight:normal;">(not editable — use Follow-Up below to log new corrective attempts)</span></div>` + s.quality.map(q=>`<div class="sub-block"><b>${esc(q.issue)}</b> — ${q.qtyBags!=null?fmt(q.qtyBags)+' bags / ':''}${fmt(q.qtyKg!=null?q.qtyKg:(q.qty||0))} kg<br><span style="color:var(--text-dim2);">Root cause: ${esc(q.rootCause)} · Action: ${esc(q.action)} · ${q.effectiveness}</span></div>`).join('') : ''}
+        ${editMode
+            ? `<div class="group-title">Quality Issues <span style="color:var(--amber);">— editable</span></div><div id="editQualityRows"></div><button class="btn small" style="background:var(--panel-2);color:var(--amber);border:1px dashed var(--amber-dim);margin-top:8px;" onclick="addEditQualityRow()">+ Add Quality Issue</button>`
+            : ((s.quality&&s.quality.length) ? `<div class="group-title">Quality Issues</div>` + s.quality.map(q=>`<div class="sub-block"><b>${esc(q.issue)}</b> — ${q.qtyBags!=null?fmt(q.qtyBags)+' bags / ':''}${fmt(q.qtyKg!=null?q.qtyKg:(q.qty||0))} kg<br><span style="color:var(--text-dim2);">Root cause: ${esc(q.rootCause)} · Action: ${esc(q.action)} · ${q.effectiveness}</span></div>`).join('') : '')}
         ${followUpSection}
         <div class="modal-actions">
           ${editMode
@@ -1387,7 +1431,7 @@ function showShiftDetail(shiftId, editMode){
         </div>
       </div>
     </div>`;
-  if(editMode) renderFollowUpRows();
+  if(editMode){ renderFollowUpRows(); renderEditQualityRows(); }
 }
 function updateEditActualOutputPreview(){
   const v = id=>parseFloat(document.getElementById(id)?.value)||0;
@@ -1465,6 +1509,7 @@ async function saveShiftEdit(plantId, shiftId){
   const orderDetails = g('edit_orderDetails').value;
   const newFollowUps = draftFollowUps.filter(f=>f.action.trim()!=='');
   const followUps = [...(existingShift.followUps||[]), ...newFollowUps];
+  const quality = draftEditQuality.filter(q=>q.issue.trim()!=='');
 
   const updates = {
     date: g('edit_date').value,
@@ -1483,10 +1528,11 @@ async function saveShiftEdit(plantId, shiftId){
     bedTop:v('edit_bedTop'), bedBottom:v('edit_bedBottom'),
     moisture:v('edit_moisture'), floatEff:v('edit_floatEff'), bulkDensity:v('edit_bulkDensity'),
     motorLoadAmp:v('edit_motorLoadAmp'), voltage:v('edit_voltage'), powerFactor:v('edit_powerFactor'), efficiency:v('edit_efficiency'), feedrateTonHr:v('edit_feedrateTonHr'),
-    dryer, followUps
+    dryer, followUps, quality
   };
   await db.collection('plants').doc(plantId).collection('shifts').doc(shiftId).update(updates);
   draftFollowUps = [];
+  draftEditQuality = [];
   closeModal();
 }
 
