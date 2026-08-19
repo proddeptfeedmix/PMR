@@ -238,6 +238,7 @@ let lastShiftDate = todayLocalStr();
 let lastShiftLabel = 'Day';
 let plantsUnsub=null, shiftsUnsub=null, diesUnsub=null, batchesUnsub=null;
 let draftQuality = [];
+const QUALITY_ISSUE_OPTIONS = ['LOW FE','3 IN 1','2 IN 1','2 COLORS','HIGH TEMP','MOISTURE','TEXTURE','COMPACT','LENGTH','FINES'];
 let draftFollowUps = []; // new follow-up corrective actions being added in Edit mode (appended on save, never replaces history)
 let draftEditQuality = []; // existing shift's quality issues being edited in-place while in Edit Parameters mode
 let userAccounts = [];       // roles collection cache (admin only)
@@ -1142,7 +1143,10 @@ function renderEditQualityRows(){
   const bagWeight = currentEditDraftBagWeight();
   wrap.innerHTML = draftEditQuality.map((q,i)=>`
     <div class="sub-block">
-      <div class="grid-row"><div class="field" style="width:100%;"><label>Issue (free text)</label><input type="text" value="${esc(q.issue)}" onchange="updateEditQuality(${i},'issue',this.value)" placeholder="e.g. Excess fines in batch"></div></div>
+      <div class="grid-row"><div class="field" style="width:100%;"><label>Issue</label><select onchange="updateEditQuality(${i},'issue',this.value)">
+        <option value="" ${!q.issue?'selected':''} disabled>Select issue…</option>
+        ${QUALITY_ISSUE_OPTIONS.map(opt=>`<option ${q.issue===opt?'selected':''}>${opt}</option>`).join('')}
+      </select></div></div>
       <div class="grid-row" style="margin-top:8px;">
         <div class="field"><label>Qty Affected (bags)</label><input type="number" value="${q.qtyBags||0}" oninput="updateEditQuality(${i},'qtyBags',this.value)"></div>
         <div class="field"><label>≈ Weight (kg)</label><input type="text" id="editQtyKgPreview_${i}" value="${fmt((q.qtyBags||0)*bagWeight)}" disabled style="opacity:0.65;background:#141618;"></div>
@@ -1176,7 +1180,10 @@ function renderQualityRows(){
   const bagWeight = currentDraftBagWeight();
   wrap.innerHTML = draftQuality.map((q,i)=>`
     <div class="sub-block">
-      <div class="grid-row"><div class="field" style="width:100%;"><label>Issue (free text)</label><input type="text" value="${esc(q.issue)}" onchange="updateQuality(${i},'issue',this.value)" placeholder="e.g. Excess fines in batch"></div></div>
+      <div class="grid-row"><div class="field" style="width:100%;"><label>Issue</label><select onchange="updateQuality(${i},'issue',this.value)">
+        <option value="" ${!q.issue?'selected':''} disabled>Select issue…</option>
+        ${QUALITY_ISSUE_OPTIONS.map(opt=>`<option ${q.issue===opt?'selected':''}>${opt}</option>`).join('')}
+      </select></div></div>
       <div class="grid-row" style="margin-top:8px;">
         <div class="field"><label>Qty Affected (bags)</label><input type="number" value="${q.qtyBags||0}" oninput="updateQuality(${i},'qtyBags',this.value)"></div>
         <div class="field"><label>≈ Weight (kg)</label><input type="text" id="qtyKgPreview_${i}" value="${fmt((q.qtyBags||0)*bagWeight)}" disabled style="opacity:0.65;background:#141618;"></div>
