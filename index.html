@@ -238,7 +238,7 @@ let lastShiftDate = todayLocalStr();
 let lastShiftLabel = 'Day';
 let plantsUnsub=null, shiftsUnsub=null, diesUnsub=null, batchesUnsub=null;
 let draftQuality = [];
-const QUALITY_ISSUE_OPTIONS = ['LOW FE','3 IN 1','2 IN 1','2 COLORS','HIGH TEMP','MOISTURE','TEXTURE','COMPACT','LENGTH','FINES'];
+const QUALITY_ISSUE_OPTIONS = ['LOW FE','3 IN 1','2 IN 1','2 COLORS','HIGH TEMP','MOISTURE','TEXTURE','COMPACT','LENGTH/OVERSIZED','FINES'];
 let draftFollowUps = []; // new follow-up corrective actions being added in Edit mode (appended on save, never replaces history)
 let draftEditQuality = []; // existing shift's quality issues being edited in-place while in Edit Parameters mode
 let userAccounts = [];       // roles collection cache (admin only)
@@ -327,6 +327,7 @@ function subscribePlantData(plantId){
   shiftsUnsub = db.collection('plants').doc(plantId).collection('shifts').onSnapshot(snap=>{
     shiftsCache = snap.docs.map(d=>({id:d.id,...d.data()}));
     render();
+    backfillQualityKg(plantId);
   });
   diesUnsub = db.collection('plants').doc(plantId).collection('dies').onSnapshot(snap=>{
     diesCache = snap.docs.map(d=>({id:d.id,...d.data()}));
@@ -339,6 +340,30 @@ function subscribePlantData(plantId){
 }
 
 function uid(pre){ return (pre||'id')+'_'+Math.random().toString(36).slice(2,9); }
+// One-time backfill: older quality-issue entries were saved with qtyBags but no
+// qtyKg (from before edits recalculated it). Fills in qtyKg using that shift's
+// variant bag weight, without touching anything else already logged. Safe to
+// run repeatedly — it only updates shifts that still have a gap, and stops
+// naturally once every shift's quality entries have qtyKg set.
+let backfillInFlight = false;
+async function backfillQualityKg(plantId){
+  if(backfillInFlight) return;
+  const plant = plants.find(p=>p.id===plantId);
+  if(!plant) return;
+  const toFix = shiftsCache.filter(s=>(s.quality||[]).some(q=>(q.qtyBags||0)>0 && q.qtyKg==null));
+  if(!toFix.length) return;
+  backfillInFlight = true;
+  try{
+    for(const s of toFix){
+      const variant = variantObj(plant, s.variantId);
+      const bagWeight = variant ? (variant.bagWeight||0) : 0;
+      const fixedQuality = (s.quality||[]).map(q=>(q.qtyKg==null && (q.qtyBags||0)>0) ? {...q, qtyKg:(q.qtyBags||0)*bagWeight} : q);
+      await db.collection('plants').doc(plantId).collection('shifts').doc(s.id).update({quality: fixedQuality});
+    }
+  } finally {
+    backfillInFlight = false;
+  }
+}
 /* Local-calendar-date helpers. IMPORTANT: never use Date#toISOString() for
    "today"/date-picker defaults — it converts to UTC first, which silently
    shifts the date by a day for any timezone ahead of UTC (e.g. Philippines,
@@ -1516,7 +1541,7 @@ async function saveShiftEdit(plantId, shiftId){
   const orderDetails = g('edit_orderDetails').value;
   const newFollowUps = draftFollowUps.filter(f=>f.action.trim()!=='');
   const followUps = [...(existingShift.followUps||[]), ...newFollowUps];
-  const quality = draftEditQuality.filter(q=>q.issue.trim()!=='');
+  const quality = draftEditQuality.filter(q=>q.issue.trim()!=='').map(q=>({...q, qtyKg:(q.qtyBags||0)*variantObj(plant,variantId).bagWeight}));
 
   const updates = {
     date: g('edit_date').value,
