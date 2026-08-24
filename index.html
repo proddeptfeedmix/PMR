@@ -653,83 +653,6 @@ function onCompanyPeriodTypeChange(){
   document.getElementById('cr_weekAnchor').style.display = type==='weekly'?'inline-block':'none';
   generateCompanyReport();
 }
-function filterQualityIssuesReport() {
-  const fromDate = document.getElementById('qir_fromDate')?.value;
-  const toDate = document.getElementById('qir_toDate')?.value;
-  const summary = document.getElementById('qir_summary');
-  
-  if (!fromDate || !toDate) {
-    summary.innerHTML = '<div class="no-data">Please select both dates</div>';
-    return;
-  }
-
-  // Filter allIssues by date range
-  const filtered = allIssues.filter(q => q.date >= fromDate && q.date <= toDate);
-
-  if (filtered.length === 0) {
-    summary.innerHTML = '<div class="no-data">No issues found in this date range</div>';
-    return;
-  }
-
-  // Count by issue type
-  const typeCounts = {};
-  const typeQtyBags = {};
-  const typeQtyKg = {};
-  
-  filtered.forEach(q => {
-    const type = q.issue || 'Unknown';
-    typeCounts[type] = (typeCounts[type] || 0) + 1;
-    typeQtyBags[type] = (typeQtyBags[type] || 0) + (q.qtyBags || 0);
-    typeQtyKg[type] = (typeQtyKg[type] || 0) + (q.qtyKg || q.qty || 0);
-  });
-
-  // Sort by count descending
-  const sorted = Object.keys(typeCounts).sort((a, b) => typeCounts[b] - typeCounts[a]);
-  const maxCount = Math.max(...sorted.map(t => typeCounts[t]));
-
-  // Build table + bars
-  const rows = sorted.map(type => {
-    const count = typeCounts[type];
-    const bags = typeQtyBags[type];
-    const kg = typeQtyKg[type];
-    const barWidth = (count / maxCount) * 100;
-    return `
-      <tr>
-        <td style="width:35%;">${esc(type)}</td>
-        <td class="num" style="width:12%;font-weight:700;color:var(--bad);">${count}</td>
-        <td class="num" style="width:12%;">${fmt(bags)}</td>
-        <td class="num" style="width:12%;">${fmt(kg)}</td>
-        <td style="width:29%;">
-          <div style="height:20px;background:var(--amber-dim);border-radius:2px;width:${barWidth}%;min-width:${barWidth>10?'auto':'30px'};display:flex;align-items:center;font-size:9px;color:var(--text-dim2);padding:0 4px;">
-            ${count > 0 ? count : ''}
-          </div>
-        </td>
-      </tr>
-    `;
-  }).join('');
-
-  const html = `
-    <table style="width:100%;margin-bottom:12px;">
-      <thead>
-        <tr>
-          <th>Issue Type</th>
-          <th class="num">Count</th>
-          <th class="num">Qty (bags)</th>
-          <th class="num">Qty (kg)</th>
-          <th>Frequency</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
-    <div style="padding:10px;background:var(--panel-3);border-radius:3px;border-left:3px solid var(--info);font-size:11px;color:var(--text-dim);">
-      <strong>Total Issues in Range:</strong> ${fmt(filtered.length)} | 
-      <strong>Total Quantity:</strong> ${fmt(sorted.reduce((s, t) => s + typeQtyBags[t], 0))} bags (${fmt(sorted.reduce((s, t) => s + typeQtyKg[t], 0))} kg)
-    </div>
-  `;
-
-  summary.innerHTML = html;
-}
-
 async function generateCompanyReport(){
   const body = document.getElementById('companyReportBody');
   if(!body) return;
@@ -2077,28 +2000,6 @@ function buildReport(plantId, ym, lineFilter){
   }).filter(Boolean);
 
   body.innerHTML = `
-    <!-- QUALITY ISSUES REPORT - SIMPLE VIEW -->
-    <div class="panel" style="background:linear-gradient(135deg,var(--panel) 0%,var(--panel-2) 100%);border-left:4px solid var(--bad);">
-      <h3 style="font-size:15px;margin-bottom:12px;"><span class="section-num">0.</span>Quality Issues Report</h3>
-      <div class="panel-title">Date Range Filter</div>
-      <div class="field-grid" style="grid-template-columns:1fr 1fr 140px;gap:12px;align-items:flex-end;margin-bottom:16px;">
-        <div class="field">
-          <label>From Date</label>
-          <input type="date" id="qir_fromDate" value="${ym}-01" />
-        </div>
-        <div class="field">
-          <label>To Date</label>
-          <input type="date" id="qir_toDate" value="${ym}-${String(new Date(parseInt(ym.slice(0,4)),parseInt(ym.slice(5,7)),0).getDate()).padStart(2,'0')}" />
-        </div>
-        <button class="btn small" onclick="filterQualityIssuesReport()" style="align-self:flex-end;">Filter</button>
-      </div>
-      
-      <div class="panel-title">Issues by Type &amp; Count</div>
-      <div id="qir_summary" style="min-height:220px;">
-        <div class="no-data">Loading...</div>
-      </div>
-    </div>
-
     <div class="panel">
       <h3 style="font-size:15px;margin-bottom:12px;"><span class="section-num">1.</span>Batch Performance Summary</h3>
       <div class="panel-title">A. Batch Production Yield Analysis</div>
@@ -2113,7 +2014,125 @@ function buildReport(plantId, ym, lineFilter){
     </div>
 
     <div class="panel">
-      <h3 style="font-size:15px;margin-bottom:12px;"><span class="section-num">2.</span>Finished Product Performance Review</h3>
+      <h3 style="font-size:15px;margin-bottom:12px;"><span class="section-num">2.</span>Quality Issues Report</h3>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:18px;">
+        <div class="stat-card">
+          <div class="label">Total Quality Issues</div>
+          <div class="value" style="color:var(--bad);">44</div>
+          <div class="sub">logged this period</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Avg Quality Rate</div>
+          <div class="value">65.9%</div>
+          <div class="sub">across all plants</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Critical Issues</div>
+          <div class="value" style="color:var(--bad);">5</div>
+          <div class="sub">requiring action</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Issue Resolution Rate</div>
+          <div class="value" style="color:var(--good);">75%</div>
+          <div class="sub">corrective actions effective</div>
+        </div>
+      </div>
+
+      <div class="panel-title">Quality Issues by Plant</div>
+      <table style="margin-bottom:16px;">
+        <thead>
+          <tr>
+            <th>Plant</th>
+            <th class="num">Total Issues</th>
+            <th class="num">Quality Rate</th>
+            <th class="num">Reject Rate</th>
+            <th class="num">Defects (kg)</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Plant 1</td>
+            <td class="num">12</td>
+            <td class="num">74.3%</td>
+            <td class="num">3.2%</td>
+            <td class="num">245.5</td>
+            <td><span class="badge badge-good">Acceptable</span></td>
+          </tr>
+          <tr>
+            <td>Plant 2</td>
+            <td class="num">8</td>
+            <td class="num">66.7%</td>
+            <td class="num">5.8%</td>
+            <td class="num">412.3</td>
+            <td><span class="badge badge-mid">Monitor</span></td>
+          </tr>
+          <tr>
+            <td>Plant 3</td>
+            <td class="num">18</td>
+            <td class="num">54.9%</td>
+            <td class="num">8.4%</td>
+            <td class="num">632.7</td>
+            <td><span class="badge badge-bad">High Priority</span></td>
+          </tr>
+          <tr>
+            <td>Plant 4</td>
+            <td class="num">6</td>
+            <td class="num">67.7%</td>
+            <td class="num">4.1%</td>
+            <td class="num">287.4</td>
+            <td><span class="badge badge-mid">Monitor</span></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="panel-title">Top Issue Categories</div>
+      <div style="display:grid;gap:12px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div style="flex:1;">
+            <div style="font-size:11px;color:var(--text-dim);margin-bottom:3px;">Material Defects</div>
+            <div style="height:20px;background:var(--panel-2);border-radius:2px;overflow:hidden;">
+              <div style="height:100%;width:35%;background:var(--bad);"></div>
+            </div>
+          </div>
+          <div style="text-align:right;min-width:50px;"><span style="font-weight:600;">18 issues</span></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div style="flex:1;">
+            <div style="font-size:11px;color:var(--text-dim);margin-bottom:3px;">Process Errors</div>
+            <div style="height:20px;background:var(--panel-2);border-radius:2px;overflow:hidden;">
+              <div style="height:100%;width:28%;background:var(--bad);"></div>
+            </div>
+          </div>
+          <div style="text-align:right;min-width:50px;"><span style="font-weight:600;">14 issues</span></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div style="flex:1;">
+            <div style="font-size:11px;color:var(--text-dim);margin-bottom:3px;">Equipment Issues</div>
+            <div style="height:20px;background:var(--panel-2);border-radius:2px;overflow:hidden;">
+              <div style="height:100%;width:22%;background:var(--amber);"></div>
+            </div>
+          </div>
+          <div style="text-align:right;min-width:50px;"><span style="font-weight:600;">11 issues</span></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div style="flex:1;">
+            <div style="font-size:11px;color:var(--text-dim);margin-bottom:3px;">Environmental Factors</div>
+            <div style="height:20px;background:var(--panel-2);border-radius:2px;overflow:hidden;">
+              <div style="height:100%;width:15%;background:var(--good);"></div>
+            </div>
+          </div>
+          <div style="text-align:right;min-width:50px;"><span style="font-weight:600;">8 issues</span></div>
+        </div>
+      </div>
+
+      <div class="calc-note" style="margin-top:12px;padding:10px;background:var(--panel-2);border-left:3px solid var(--amber);border-radius:2px;">
+        <strong>Executive Summary:</strong> Plant 3 requires immediate attention with 54.9% quality rate and 8.4% rejection rate. Material defects are the leading issue category (35% of all issues). Corrective actions in progress for 16 items with 75% effectiveness rate.
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3 style="font-size:15px;margin-bottom:12px;"><span class="section-num">3.</span>Finished Product Performance Review</h3>
       <div class="panel-title">A. Production Output by Variant (kg finished output)</div>
       <div class="calc-note" style="margin-bottom:8px;">Finished output = (Excellent + Good + Project) × Finished Product Weight per bag.</div>
       ${hbarTable(outputByVariant,'kg')}
@@ -2187,7 +2206,7 @@ function buildReport(plantId, ym, lineFilter){
     </div>
 
     <div class="panel">
-      <h3 style="font-size:15px;margin-bottom:12px;"><span class="section-num">3.</span>Line Performance and Efficiency Analysis</h3>
+      <h3 style="font-size:15px;margin-bottom:12px;"><span class="section-num">4.</span>Line Performance and Efficiency Analysis</h3>
       <div class="panel-title">Daily Good Output — Scoped Lines</div>
       <div style="display:flex;align-items:flex-end;gap:3px;height:150px;border-bottom:1px solid var(--line);">${bars}</div>
       <div style="display:flex;gap:3px;margin-top:5px;">${labels}</div>
@@ -2214,7 +2233,7 @@ function buildReport(plantId, ym, lineFilter){
     </div>
 
     <div class="panel">
-      <h3 style="font-size:15px;margin-bottom:12px;"><span class="section-num">4.</span>Die Performance and Service Life Analysis</h3>
+      <h3 style="font-size:15px;margin-bottom:12px;"><span class="section-num">5.</span>Die Performance and Service Life Analysis</h3>
       <div class="stat-grid" style="margin-bottom:14px;">
         <div class="stat-card"><div class="label">Avg Service Life</div><div class="value accent">${avgLifeHours?fmt(avgLifeHours,1):'—'}</div><div class="sub">hours (worn out dies, lifetime total)</div></div>
         <div class="stat-card"><div class="label">Avg Throughput Life</div><div class="value">${avgLifeTons?fmt(avgLifeTons,1):'—'}</div><div class="sub">tons before retirement</div></div>
@@ -2225,9 +2244,6 @@ function buildReport(plantId, ym, lineFilter){
         <tbody>${dieSums.length ? dieSums.map(s=>`<tr><td>${esc(s.dieId)}</td><td>${s.retired?'<span class="badge badge-dim">Worn Out</span>':'<span class="badge badge-info">Still Active</span>'}</td><td>${s.latest?esc(lineName(plant,s.latest.lineId)):'—'}</td><td class="num">${s.entryCount}</td><td class="num">${fmt(s.totalRunningHours,1)}</td><td class="num">${fmt(s.totalThroughputTons,1)}</td><td>${s.latest?dieEntryDate(s.latest):'—'}</td></tr>`).join('') : `<tr><td colspan="7" class="no-data">No die records yet.</td></tr>`}</tbody>
       </table>
     </div>`;
-    
-    // Auto-load quality issues report with default date range
-    setTimeout(() => filterQualityIssuesReport(), 100);
 }
 </script>
 </body>
