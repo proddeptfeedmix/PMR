@@ -211,12 +211,12 @@
    → General → Your apps → SDK setup and configuration).
    ============================================================ */
 const firebaseConfig = {
-  apiKey: "AIzaSyCvFCp33X18zRx7DWxZ-k2EVo_K8ItFuS8",
-  authDomain: "productionr-2ca22.firebaseapp.com",
-  projectId: "productionr-2ca22",
-  storageBucket: "productionr-2ca22.firebasestorage.app",
-  messagingSenderId: "550974432860",
-  appId: "1:550974432860:web:a003243c7ae9042ee0e899"
+  apiKey: "AIzaSyB_tgkmCtOKSZxxrH2zpMJROcg3ICvWMm8",
+  authDomain: "plant-operation.firebaseapp.com",
+  projectId: "plant-operation",
+  storageBucket: "plant-operation.firebasestorage.app",
+  messagingSenderId: "63714104008",
+  appId: "1:63714104008:web:8bdbcc4938b528e0fdcbfd"
 };
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
@@ -234,13 +234,41 @@ let activePlantId = null;
 let activeTab = 'shift';
 let adminView = null;        // null | 'facilities' | 'users'
 let mainRenderedKey = null;  // tracks what's currently painted in #mainArea so live data updates don't wipe in-progress form input
+let logFilters = { shift:{month:'all',year:'all'}, batch:{month:'all',year:'all'}, die:{month:'all',year:'all'} };
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+function filterByMonthYear(items, filterKey, dateField){
+  const f = logFilters[filterKey];
+  if(f.month==='all' && f.year==='all') return items;
+  return items.filter(i=>{
+    const d = dateField ? i[dateField] : i.date;
+    if(!d) return true;
+    const y = d.slice(0,4), m = d.slice(5,7);
+    if(f.year!=='all' && y!==f.year) return false;
+    if(f.month!=='all' && m!==f.month) return false;
+    return true;
+  });
+}
+function monthYearFilterControls(filterKey, items, dateField, refreshFn){
+  const f = logFilters[filterKey];
+  const dates = items.map(i=>(dateField?i[dateField]:i.date)).filter(Boolean);
+  const years = [...new Set(dates.map(d=>d.slice(0,4)))].sort().reverse();
+  return `
+    <span class="eyebrow">Filter</span>
+    <select onchange="logFilters.${filterKey}.month=this.value;${refreshFn}()">
+      <option value="all" ${f.month==='all'?'selected':''}>All Months</option>
+      ${MONTH_NAMES.map((mn,i)=>{const mm=String(i+1).padStart(2,'0'); return `<option value="${mm}" ${f.month===mm?'selected':''}>${mn}</option>`;}).join('')}
+    </select>
+    <select onchange="logFilters.${filterKey}.year=this.value;${refreshFn}()">
+      <option value="all" ${f.year==='all'?'selected':''}>All Years</option>
+      ${years.map(y=>`<option value="${y}" ${f.year===y?'selected':''}>${y}</option>`).join('')}
+    </select>
+    ${(f.month!=='all'||f.year!=='all') ? `<button class="btn ghost small" onclick="logFilters.${filterKey}={month:'all',year:'all'};${refreshFn}()">Clear</button>` : ''}`;
+}
 let lastShiftDate = todayLocalStr();
 let lastShiftLabel = 'Day';
 let plantsUnsub=null, shiftsUnsub=null, diesUnsub=null, batchesUnsub=null;
 let draftQuality = [];
-const QUALITY_ISSUE_OPTIONS = ['LOW FE','3 IN 1','2 IN 1','2 COLORS','HIGH TEMP','MOISTURE','TEXTURE','COMPACT','LENGTH/OVERSIZED','FINES'];
 let draftFollowUps = []; // new follow-up corrective actions being added in Edit mode (appended on save, never replaces history)
-let draftEditQuality = []; // existing shift's quality issues being edited in-place while in Edit Parameters mode
 let userAccounts = [];       // roles collection cache (admin only)
 
 /* ---------------- AUTH ---------------- */
@@ -327,7 +355,6 @@ function subscribePlantData(plantId){
   shiftsUnsub = db.collection('plants').doc(plantId).collection('shifts').onSnapshot(snap=>{
     shiftsCache = snap.docs.map(d=>({id:d.id,...d.data()}));
     render();
-    backfillQualityKg(plantId);
   });
   diesUnsub = db.collection('plants').doc(plantId).collection('dies').onSnapshot(snap=>{
     diesCache = snap.docs.map(d=>({id:d.id,...d.data()}));
@@ -340,30 +367,6 @@ function subscribePlantData(plantId){
 }
 
 function uid(pre){ return (pre||'id')+'_'+Math.random().toString(36).slice(2,9); }
-// One-time backfill: older quality-issue entries were saved with qtyBags but no
-// qtyKg (from before edits recalculated it). Fills in qtyKg using that shift's
-// variant bag weight, without touching anything else already logged. Safe to
-// run repeatedly — it only updates shifts that still have a gap, and stops
-// naturally once every shift's quality entries have qtyKg set.
-let backfillInFlight = false;
-async function backfillQualityKg(plantId){
-  if(backfillInFlight) return;
-  const plant = plants.find(p=>p.id===plantId);
-  if(!plant) return;
-  const toFix = shiftsCache.filter(s=>(s.quality||[]).some(q=>(q.qtyBags||0)>0 && q.qtyKg==null));
-  if(!toFix.length) return;
-  backfillInFlight = true;
-  try{
-    for(const s of toFix){
-      const variant = variantObj(plant, s.variantId);
-      const bagWeight = variant ? (variant.bagWeight||0) : 0;
-      const fixedQuality = (s.quality||[]).map(q=>(q.qtyKg==null && (q.qtyBags||0)>0) ? {...q, qtyKg:(q.qtyBags||0)*bagWeight} : q);
-      await db.collection('plants').doc(plantId).collection('shifts').doc(s.id).update({quality: fixedQuality});
-    }
-  } finally {
-    backfillInFlight = false;
-  }
-}
 /* Local-calendar-date helpers. IMPORTANT: never use Date#toISOString() for
    "today"/date-picker defaults — it converts to UTC first, which silently
    shifts the date by a day for any timezone ahead of UTC (e.g. Philippines,
@@ -378,7 +381,7 @@ function localDateStr(dt){
 function todayLocalStr(){ return localDateStr(new Date()); }
 function currentMonthLocalStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
 function esc(s){ const d=document.createElement('div'); d.textContent=s==null?'':s; return d.innerHTML; }
-function closeModal(){ document.getElementById('modalRoot').innerHTML=''; draftFollowUps=[]; draftEditQuality=[]; }
+function closeModal(){ document.getElementById('modalRoot').innerHTML=''; }
 function fmt(n,dec){ if(n==null||isNaN(n)) return '0'; return n.toLocaleString(undefined,{minimumFractionDigits:dec||0,maximumFractionDigits:dec||0}); }
 function currentPlant(){ return plants.find(p=>p.id===activePlantId); }
 function refreshDropdown(selectId, items){
@@ -675,12 +678,20 @@ async function generateCompanyReport(){
 
   // Build per-plant structured data: plant -> lines -> variants
   const plantData = [];
+  const companyIssueTally = {}; // issue text -> {bags, kg}
   for(const plant of plants){
     let shiftsSnap;
     try{ shiftsSnap = await db.collection('plants').doc(plant.id).collection('shifts').get(); }
     catch(e){ plantData.push({plant, lineGroups:[], totalFinishedProductBags:0, totalFinishedProductKg:0, totalRejectKg:0, avgOee:0, shiftCount:0}); continue; }
     const allShifts = shiftsSnap.docs.map(d=>({id:d.id,...d.data()})).filter(s=>s.date>=start && s.date<=end);
     const metrics = allShifts.map(s=>({s,m:shiftMetrics(s,plant)}));
+    allShifts.forEach(s=>(s.quality||[]).forEach(q=>{
+      const key = (q.issue||'').trim();
+      if(!key) return;
+      if(!companyIssueTally[key]) companyIssueTally[key] = {bags:0, kg:0};
+      companyIssueTally[key].bags += (q.qtyBags||0);
+      companyIssueTally[key].kg += (q.qtyKg!=null?q.qtyKg:(q.qty||0));
+    }));
     // NOTE: "Finished Product" here is defined as Excellent + Good + Project bags
     // (everything except Reject) — this is specific to the Company Report's Plant
     // Summary section, per an explicit request. Elsewhere in the app (Shift Log's
@@ -786,11 +797,21 @@ async function generateCompanyReport(){
     </details>`;
   }).join('');
 
+  const issueTallyRows = Object.entries(companyIssueTally).sort((a,b)=>b[1].kg-a[1].kg);
+
   body.innerHTML = `
     <div class="calc-note" style="margin-bottom:12px;">Showing ${esc(label)}</div>
     <div class="panel-title">Plant Summary — click a plant to expand (grouped by Line → Variant)</div>
     <div class="calc-note" style="margin-bottom:10px;">Finished Product here = Excellent + Good + Project bags (everything except Reject). This is specific to this report — elsewhere in the app, "good output" means Excellent + Good only.</div>
     ${plantSummaryHtml}
+
+    <div class="panel-title" style="margin-top:24px;">Total Non-Conformance by Issue — All Plants</div>
+    <div class="calc-note" style="margin-bottom:10px;">Total quantity affected (bags/kg) for each distinct quality issue logged, summed across every plant this period. Sorted by kg affected, highest first.</div>
+    <table>
+      <thead><tr><th>Non-Conformance (Issue)</th><th class="num">Total Qty (bags)</th><th class="num">Total Qty (kg)</th></tr></thead>
+      <tbody>${issueTallyRows.length ? issueTallyRows.map(([issue,t])=>`<tr><td>${esc(issue)}</td><td class="num">${fmt(t.bags)}</td><td class="num">${fmt(t.kg)}</td></tr>`).join('') : `<tr><td colspan="3" class="no-data">No quality issues logged this period.</td></tr>`}</tbody>
+    </table>
+
     <div class="panel-title" style="margin-top:24px;">Line Performance — click a plant to expand (grouped by Line → Variant)</div>
     ${linePerfHtml}
   `;
@@ -881,14 +902,6 @@ function groupByLine(list, lines){
     return {line, items};
   });
 }
-function toggleQualityDetail(id, headerEl){
-  const el = document.getElementById(id);
-  if(!el) return;
-  const showing = el.style.display !== 'none';
-  el.style.display = showing ? 'none' : 'block';
-  const caret = headerEl.querySelector('.qdetail-caret');
-  if(caret) caret.style.transform = showing ? '' : 'rotate(90deg)';
-}
 function hbarTable(dataObj, unit, decimals){
   const entries = Object.entries(dataObj);
   if(!entries.length) return `<div class="no-data">No data available.</div>`;
@@ -972,8 +985,7 @@ function renderMain(){
     else if(activeTab==='batch'){ refreshDropdown('b_line', plant.lines); refreshDropdown('b_variant', plant.variants); renderBatchTable(plant); }
     else if(activeTab==='die'){ refreshDropdown('d_line', (plant.lines||[]).filter(l=>l.type!=='Crumbler')); renderDieSummary(plant); renderDieTable(plant); }
     else if(activeTab==='report'){
-      const mSel=document.getElementById('reportMonth'), lSel=document.getElementById('reportLine');
-      if(mSel && lSel) buildReport(plant.id, mSel.value, lSel.value);
+      if(document.getElementById('reportLine')) buildReportFromControls(plant.id);
     }
     return;
   }
@@ -1117,7 +1129,10 @@ function renderShiftTab(plant){
     </div>
 
     <div class="panel">
-      <div class="panel-title">Logged Shifts (click a row for full parameters)</div>
+      <div class="panel-title" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <span>Logged Shifts (click a row for full parameters)</span>
+        <span style="display:flex;align-items:center;gap:8px;font-family:'JetBrains Mono';text-transform:none;letter-spacing:0;" id="shiftFilterBar"></span>
+      </div>
       <div id="shiftTableWrap"></div>
     </div>
   `;
@@ -1125,10 +1140,14 @@ function renderShiftTab(plant){
   updatePlannedHoursFromRequest();
   renderShiftTable(plant);
 }
+function renderShiftTable_refresh(){ const p=currentPlant(); if(p) renderShiftTable(p); }
 function renderShiftTable(plant){
   const wrap = document.getElementById('shiftTableWrap');
   if(!wrap) return;
-  const groups = groupByLine(shiftsCache, plant.lines||[]);
+  const filterBar = document.getElementById('shiftFilterBar');
+  if(filterBar) filterBar.innerHTML = monthYearFilterControls('shift', shiftsCache, 'date', 'renderShiftTable_refresh');
+  const filtered = filterByMonthYear(shiftsCache, 'shift', 'date');
+  const groups = groupByLine(filtered, plant.lines||[]);
   wrap.innerHTML = groups.length ? groups.map(g=>{
     const rows = g.items.map(s=>{
       const m = shiftMetrics(s, plant);
@@ -1162,50 +1181,6 @@ function currentDraftBagWeight(){
   const variant = variantObj(plant, variantId);
   return variant ? (variant.bagWeight||0) : 0;
 }
-function currentEditDraftBagWeight(){
-  const plant = currentPlant();
-  if(!plant) return 0;
-  const variantId = document.getElementById('edit_variantId')?.value;
-  const variant = variantObj(plant, variantId);
-  return variant ? (variant.bagWeight||0) : 0;
-}
-function renderEditQualityRows(){
-  const wrap = document.getElementById('editQualityRows');
-  if(!wrap) return;
-  if(!draftEditQuality.length){ wrap.innerHTML = `<div style="color:var(--text-dim2);font-size:12px;">No quality issues logged for this shift.</div>`; return; }
-  const bagWeight = currentEditDraftBagWeight();
-  wrap.innerHTML = draftEditQuality.map((q,i)=>`
-    <div class="sub-block">
-      <div class="grid-row"><div class="field" style="width:100%;"><label>Issue</label><select onchange="updateEditQuality(${i},'issue',this.value)">
-        <option value="" ${!q.issue?'selected':''} disabled>Select issue…</option>
-        ${QUALITY_ISSUE_OPTIONS.map(opt=>`<option ${q.issue===opt?'selected':''}>${opt}</option>`).join('')}
-      </select></div></div>
-      <div class="grid-row" style="margin-top:8px;">
-        <div class="field"><label>Qty Affected (bags)</label><input type="number" value="${q.qtyBags||0}" oninput="updateEditQuality(${i},'qtyBags',this.value)"></div>
-        <div class="field"><label>≈ Weight (kg)</label><input type="text" id="editQtyKgPreview_${i}" value="${fmt((q.qtyBags||0)*bagWeight)}" disabled style="opacity:0.65;background:#141618;"></div>
-        <div class="field" style="flex:1;"><label>Root Cause</label><input type="text" value="${esc(q.rootCause)}" onchange="updateEditQuality(${i},'rootCause',this.value)"></div>
-      </div>
-      <div class="grid-row" style="margin-top:8px;">
-        <div class="field" style="flex:1;"><label>Corrective Action</label><input type="text" value="${esc(q.action)}" onchange="updateEditQuality(${i},'action',this.value)"></div>
-        <div class="field"><label>Effectiveness</label><select onchange="updateEditQuality(${i},'effectiveness',this.value)">
-          <option ${q.effectiveness==='Pending'?'selected':''}>Pending</option>
-          <option ${q.effectiveness==='Effective'?'selected':''}>Effective</option>
-          <option ${q.effectiveness==='Partially Effective'?'selected':''}>Partially Effective</option>
-          <option ${q.effectiveness==='Not Effective'?'selected':''}>Not Effective</option>
-        </select></div>
-        <button class="del-btn" onclick="removeEditQualityRow(${i})" style="align-self:center;">✕</button>
-      </div>
-    </div>`).join('');
-}
-function addEditQualityRow(){ draftEditQuality.push({issue:'',qtyBags:0,rootCause:'',action:'',effectiveness:'Pending'}); renderEditQualityRows(); }
-function removeEditQualityRow(i){ draftEditQuality.splice(i,1); renderEditQualityRows(); }
-function updateEditQuality(i,key,val){
-  draftEditQuality[i][key] = key==='qtyBags' ? (parseFloat(val)||0) : val;
-  if(key==='qtyBags'){
-    const preview = document.getElementById('editQtyKgPreview_'+i);
-    if(preview) preview.value = fmt(draftEditQuality[i].qtyBags * currentEditDraftBagWeight());
-  }
-}
 function renderQualityRows(){
   const wrap = document.getElementById('qualityRows');
   if(!wrap) return;
@@ -1213,10 +1188,7 @@ function renderQualityRows(){
   const bagWeight = currentDraftBagWeight();
   wrap.innerHTML = draftQuality.map((q,i)=>`
     <div class="sub-block">
-      <div class="grid-row"><div class="field" style="width:100%;"><label>Issue</label><select onchange="updateQuality(${i},'issue',this.value)">
-        <option value="" ${!q.issue?'selected':''} disabled>Select issue…</option>
-        ${QUALITY_ISSUE_OPTIONS.map(opt=>`<option ${q.issue===opt?'selected':''}>${opt}</option>`).join('')}
-      </select></div></div>
+      <div class="grid-row"><div class="field" style="width:100%;"><label>Issue (free text)</label><input type="text" value="${esc(q.issue)}" onchange="updateQuality(${i},'issue',this.value)" placeholder="e.g. Excess fines in batch"></div></div>
       <div class="grid-row" style="margin-top:8px;">
         <div class="field"><label>Qty Affected (bags)</label><input type="number" value="${q.qtyBags||0}" oninput="updateQuality(${i},'qtyBags',this.value)"></div>
         <div class="field"><label>≈ Weight (kg)</label><input type="text" id="qtyKgPreview_${i}" value="${fmt((q.qtyBags||0)*bagWeight)}" disabled style="opacity:0.65;background:#141618;"></div>
@@ -1358,7 +1330,7 @@ function showShiftDetail(shiftId, editMode){
   const m = shiftMetrics(s, plant);
   const oc = oeeClass(m.oee);
   const dryer = s.dryer||{};
-  if(editMode){ draftFollowUps = []; draftEditQuality = (s.quality||[]).map(q=>({...q})); }
+  if(editMode) draftFollowUps = [];
   const dryerItems = editMode
     ? Array.from({length:DRYER_ZONES},(_,i)=>i+1).map(i=>detailOrField('T'+i, dryer['t'+i], 'edit_dryer_t'+i, true)).join('')
     : Object.keys(dryer).map(k=>`<div class="detail-item"><div class="dl">${k.toUpperCase()}</div><div class="dv">${dryer[k]}</div></div>`).join('');
@@ -1460,9 +1432,7 @@ function showShiftDetail(shiftId, editMode){
           <div class="detail-item"><div class="dl">Quality</div><div class="dv">${m.qualityRate.toFixed(1)}%</div></div>
           <div class="detail-item"><div class="dl">OEE</div><div class="dv"><span class="badge ${oc.cls}">${m.oee.toFixed(1)}% — ${oc.label}</span></div></div>
         </div>` : `<div class="calc-note">OEE, Availability, Performance, Quality, Power and SME will recompute automatically from the values above once saved.</div>`}
-        ${editMode
-            ? `<div class="group-title">Quality Issues <span style="color:var(--amber);">— editable</span></div><div id="editQualityRows"></div><button class="btn small" style="background:var(--panel-2);color:var(--amber);border:1px dashed var(--amber-dim);margin-top:8px;" onclick="addEditQualityRow()">+ Add Quality Issue</button>`
-            : ((s.quality&&s.quality.length) ? `<div class="group-title">Quality Issues</div>` + s.quality.map(q=>`<div class="sub-block"><b>${esc(q.issue)}</b> — ${q.qtyBags!=null?fmt(q.qtyBags)+' bags / ':''}${fmt(q.qtyKg!=null?q.qtyKg:(q.qty||0))} kg<br><span style="color:var(--text-dim2);">Root cause: ${esc(q.rootCause)} · Action: ${esc(q.action)} · ${q.effectiveness}</span></div>`).join('') : '')}
+        ${(s.quality&&s.quality.length) ? `<div class="group-title">Quality Issues <span style="color:var(--text-dim2);font-weight:normal;">(not editable — use Follow-Up below to log new corrective attempts)</span></div>` + s.quality.map(q=>`<div class="sub-block"><b>${esc(q.issue)}</b> — ${q.qtyBags!=null?fmt(q.qtyBags)+' bags / ':''}${fmt(q.qtyKg!=null?q.qtyKg:(q.qty||0))} kg<br><span style="color:var(--text-dim2);">Root cause: ${esc(q.rootCause)} · Action: ${esc(q.action)} · ${q.effectiveness}</span></div>`).join('') : ''}
         ${followUpSection}
         <div class="modal-actions">
           ${editMode
@@ -1471,7 +1441,7 @@ function showShiftDetail(shiftId, editMode){
         </div>
       </div>
     </div>`;
-  if(editMode){ renderFollowUpRows(); renderEditQualityRows(); }
+  if(editMode) renderFollowUpRows();
 }
 function updateEditActualOutputPreview(){
   const v = id=>parseFloat(document.getElementById(id)?.value)||0;
@@ -1549,7 +1519,6 @@ async function saveShiftEdit(plantId, shiftId){
   const orderDetails = g('edit_orderDetails').value;
   const newFollowUps = draftFollowUps.filter(f=>f.action.trim()!=='');
   const followUps = [...(existingShift.followUps||[]), ...newFollowUps];
-  const quality = draftEditQuality.filter(q=>q.issue.trim()!=='').map(q=>({...q, qtyKg:(q.qtyBags||0)*variantObj(plant,variantId).bagWeight}));
 
   const updates = {
     date: g('edit_date').value,
@@ -1568,16 +1537,29 @@ async function saveShiftEdit(plantId, shiftId){
     bedTop:v('edit_bedTop'), bedBottom:v('edit_bedBottom'),
     moisture:v('edit_moisture'), floatEff:v('edit_floatEff'), bulkDensity:v('edit_bulkDensity'),
     motorLoadAmp:v('edit_motorLoadAmp'), voltage:v('edit_voltage'), powerFactor:v('edit_powerFactor'), efficiency:v('edit_efficiency'), feedrateTonHr:v('edit_feedrateTonHr'),
-    dryer, followUps, quality
+    dryer, followUps
   };
   await db.collection('plants').doc(plantId).collection('shifts').doc(shiftId).update(updates);
   draftFollowUps = [];
-  draftEditQuality = [];
   closeModal();
 }
 
 
 /* ---------------- BATCH PERFORMANCE TAB ---------------- */
+function currentBatchDraftBagWeight(){
+  const plant = currentPlant();
+  if(!plant) return 0;
+  const variantId = document.getElementById('b_variant')?.value;
+  const variant = variantObj(plant, variantId);
+  return variant ? (variant.bagWeight||0) : 0;
+}
+function updateBatchPreviews(){
+  const bw = currentBatchDraftBagWeight();
+  const rejectBags = parseFloat(document.getElementById('b_rejectBags')?.value)||0;
+  const finishedBags = parseFloat(document.getElementById('b_finishedBags')?.value)||0;
+  const rp = document.getElementById('b_rejectKgPreview'); if(rp) rp.value = fmt(rejectBags*bw);
+  const fp = document.getElementById('b_finishedKgPreview'); if(fp) fp.value = fmt(finishedBags*bw);
+}
 function renderBatchTab(plant){
   const content = document.getElementById('tabContent');
   content.innerHTML = `
@@ -1587,32 +1569,42 @@ function renderBatchTab(plant){
         <div class="field"><label>Date</label><input type="date" id="b_date" value="${todayLocalStr()}"></div>
         <div class="field"><label>Shift</label><select id="b_shift"><option>Day</option><option>Night</option></select></div>
         <div class="field"><label>Line</label><select id="b_line">${plant.lines.map(l=>`<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select></div>
-        <div class="field"><label>Variant</label><select id="b_variant">${plant.variants.map(v=>`<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Variant</label><select id="b_variant" onchange="updateBatchPreviews()">${plant.variants.map(v=>`<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select></div>
         <div class="field"><label>Batch Weight (kg)</label><input type="number" id="b_batchWeight" placeholder="0"></div>
         <div class="field"><label>Fines Weight (kg)</label><input type="number" id="b_finesWeight" placeholder="0"></div>
-        <div class="field"><label>Reject (bags)</label><input type="number" id="b_rejectBags" placeholder="0"></div>
-        <div class="field"><label>Finished Product Output (kg)</label><input type="number" id="b_finished" placeholder="0"></div>
+        <div class="field"><label>Reject (bags)</label><input type="number" id="b_rejectBags" placeholder="0" oninput="updateBatchPreviews()"></div>
+        <div class="field"><label>≈ Reject (kg)</label><input type="text" id="b_rejectKgPreview" value="0" disabled style="opacity:0.65;background:#141618;"></div>
+        <div class="field"><label>Finished Product Output (bags)</label><input type="number" id="b_finishedBags" placeholder="0" oninput="updateBatchPreviews()"></div>
+        <div class="field"><label>≈ FP Output (kg)</label><input type="text" id="b_finishedKgPreview" value="0" disabled style="opacity:0.65;background:#141618;"></div>
       </div>
-      <div class="calc-note">Yield Weight = Batch Weight − Fines Weight. Yield % = Yield Weight ÷ Batch Weight. Recovery % = Finished Product Output ÷ Batch Weight.</div>
+      <div class="calc-note">Yield Weight = Batch Weight − Fines Weight. Yield % = Yield Weight ÷ Batch Weight. Recovery % = Finished Product Output (kg) ÷ Batch Weight. Enter Reject and Finished Product Output as bag counts — the kg equivalent is calculated automatically using the variant's bag weight.</div>
       <div style="margin-top:14px;"><button class="btn" onclick="submitBatch('${plant.id}')">Save Batch Entry</button></div>
     </div>
     <div class="panel">
-      <div class="panel-title">Logged Batches (click a row for full parameters)</div>
+      <div class="panel-title" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <span>Logged Batches (click a row to view or edit)</span>
+        <span style="display:flex;align-items:center;gap:8px;font-family:'JetBrains Mono';text-transform:none;letter-spacing:0;" id="batchFilterBar"></span>
+      </div>
       <div id="batchTableWrap"></div>
     </div>`;
   renderBatchTable(plant);
 }
+function renderBatchTable_refresh(){ const p=currentPlant(); if(p) renderBatchTable(p); }
 function renderBatchTable(plant){
   const wrap = document.getElementById('batchTableWrap');
   if(!wrap) return;
-  const groups = groupByLine(batchesCache, plant.lines||[]);
+  const filterBar = document.getElementById('batchFilterBar');
+  if(filterBar) filterBar.innerHTML = monthYearFilterControls('batch', batchesCache, 'date', 'renderBatchTable_refresh');
+  const filtered = filterByMonthYear(batchesCache, 'batch', 'date');
+  const groups = groupByLine(filtered, plant.lines||[]);
   wrap.innerHTML = groups.length ? groups.map(g=>{
     const rows = g.items.map(b=>{
       const bm = batchMetrics(b, plant);
       return `<tr class="clickable" onclick="showBatchDetail('${b.id}')">
         <td>${b.date}</td><td>${esc(b.shiftLabel||'—')}</td><td>${esc(variantName(plant,b.variantId))}</td>
         <td class="num">${fmt(b.batchWeight)}</td><td class="num">${fmt(b.finesWeight!=null?b.finesWeight:0)}</td><td class="num">${fmt(bm.yieldWeight)}</td>
-        <td class="num">${fmt(bm.rejectKg)}</td><td class="num">${fmt(b.finishedOutput)}</td>
+        <td class="num">${b.rejectBags!=null?fmt(b.rejectBags):'—'}</td><td class="num">${fmt(bm.rejectKg)}</td>
+        <td class="num">${b.finishedOutputBags!=null?fmt(b.finishedOutputBags):'—'}</td><td class="num">${fmt(b.finishedOutput)}</td>
         <td class="num">${bm.yieldPct.toFixed(1)}%</td><td class="num">${bm.recoveryPct.toFixed(1)}%</td>
         <td class="num" onclick="event.stopPropagation()"><button class="del-btn" onclick="deleteBatch('${plant.id}','${b.id}')">✕</button></td>
       </tr>`;
@@ -1621,8 +1613,8 @@ function renderBatchTable(plant){
       <div class="line-group">
         <div class="line-group-header"><span class="lg-name">${esc(g.line.name)}</span><span class="lg-type">${esc(g.line.type)}</span></div>
         <table>
-          <thead><tr><th>Date</th><th>Shift</th><th>Variant</th><th class="num">Batch Wt</th><th class="num">Fines Wt</th><th class="num">Yield Wt</th><th class="num">Reject (kg)</th><th class="num">FP Output</th><th class="num">Yield %</th><th class="num">Recovery %</th><th></th></tr></thead>
-          <tbody>${g.items.length ? rows : `<tr><td colspan="11" class="no-data">No batches logged for this line yet.</td></tr>`}</tbody>
+          <thead><tr><th>Date</th><th>Shift</th><th>Variant</th><th class="num">Batch Wt</th><th class="num">Fines Wt</th><th class="num">Yield Wt</th><th class="num">Reject (bags)</th><th class="num">Reject (kg)</th><th class="num">FP Out (bags)</th><th class="num">FP Out (kg)</th><th class="num">Yield %</th><th class="num">Recovery %</th><th></th></tr></thead>
+          <tbody>${g.items.length ? rows : `<tr><td colspan="13" class="no-data">No batches logged for this line yet.</td></tr>`}</tbody>
         </table>
       </div>`;
   }).join('') : `<div class="no-data">No lines set up for this facility.</div>`;
@@ -1638,12 +1630,16 @@ async function submitBatch(plantId){
     mainRenderedKey = null; render();
     return;
   }
+  const bagWeight = variantObj(plant,variantId).bagWeight||0;
+  const rejectBags = parseFloat(g('b_rejectBags').value)||0;
+  const finishedBags = parseFloat(g('b_finishedBags').value)||0;
   const record = {
     date, shiftLabel: g('b_shift').value, lineId, variantId,
     batchWeight: parseFloat(g('b_batchWeight').value)||0,
     finesWeight: parseFloat(g('b_finesWeight').value)||0,
-    rejectBags: parseFloat(g('b_rejectBags').value)||0,
-    finishedOutput: parseFloat(g('b_finished').value)||0,
+    rejectBags,
+    finishedOutputBags: finishedBags,
+    finishedOutput: finishedBags*bagWeight,
     createdAt: Date.now()
   };
   await db.collection('plants').doc(plantId).collection('batches').add(record);
@@ -1653,74 +1649,76 @@ async function submitBatch(plantId){
 async function deleteBatch(plantId, batchId){
   await db.collection('plants').doc(plantId).collection('batches').doc(batchId).delete();
 }
+function updateEditBatchPreviews(){
+  const plant = currentPlant();
+  const variantId = document.getElementById('editb_variant')?.value;
+  const variant = variantObj(plant, variantId);
+  const bw = variant ? (variant.bagWeight||0) : 0;
+  const rejectBags = parseFloat(document.getElementById('editb_rejectBags')?.value)||0;
+  const finishedBags = parseFloat(document.getElementById('editb_finishedBags')?.value)||0;
+  const rp = document.getElementById('editb_rejectKgPreview'); if(rp) rp.value = fmt(rejectBags*bw);
+  const fp = document.getElementById('editb_finishedKgPreview'); if(fp) fp.value = fmt(finishedBags*bw);
+}
 function showBatchDetail(batchId, editMode){
   const plant = currentPlant();
   const b = batchesCache.find(x=>x.id===batchId);
   if(!b) return;
   const bm = batchMetrics(b, plant);
-
-  const basicInfoEdit = `
+  const basicEdit = `
     <div class="field"><label>Date</label><input type="date" id="editb_date" value="${b.date}"></div>
     <div class="field"><label>Shift</label><select id="editb_shift"><option ${b.shiftLabel==='Day'?'selected':''}>Day</option><option ${b.shiftLabel==='Night'?'selected':''}>Night</option></select></div>
     <div class="field"><label>Line</label><select id="editb_line">${(plant.lines||[]).map(l=>`<option value="${l.id}" ${l.id===b.lineId?'selected':''}>${esc(l.name)}</option>`).join('')}</select></div>
-    <div class="field"><label>Variant</label><select id="editb_variant">${(plant.variants||[]).map(v=>`<option value="${v.id}" ${v.id===b.variantId?'selected':''}>${esc(v.name)}</option>`).join('')}</select></div>
+    <div class="field"><label>Variant</label><select id="editb_variant" onchange="updateEditBatchPreviews()">${(plant.variants||[]).map(v=>`<option value="${v.id}" ${v.id===b.variantId?'selected':''}>${esc(v.name)}</option>`).join('')}</select></div>
     <div class="field"><label>Batch Weight (kg)</label><input type="number" id="editb_batchWeight" value="${b.batchWeight||0}"></div>
-    <div class="field"><label>Fines Weight (kg)</label><input type="number" id="editb_finesWeight" value="${b.finesWeight!=null?b.finesWeight:0}"></div>
-    <div class="field"><label>Reject (bags)</label><input type="number" id="editb_rejectBags" value="${b.rejectBags!=null?b.rejectBags:0}"></div>
-    <div class="field"><label>Finished Product Output (kg)</label><input type="number" id="editb_finished" value="${b.finishedOutput||0}"></div>`;
-  const basicInfoView = `
-    <div class="detail-item"><div class="dl">Date</div><div class="dv">${b.date}</div></div>
-    <div class="detail-item"><div class="dl">Shift</div><div class="dv">${esc(b.shiftLabel||'—')}</div></div>
+    <div class="field"><label>Fines Weight (kg)</label><input type="number" id="editb_finesWeight" value="${b.finesWeight||0}"></div>
+    <div class="field"><label>Reject (bags)</label><input type="number" id="editb_rejectBags" value="${b.rejectBags||0}" oninput="updateEditBatchPreviews()"></div>
+    <div class="field"><label>≈ Reject (kg)</label><input type="text" id="editb_rejectKgPreview" value="${fmt(bm.rejectKg)}" disabled style="opacity:0.65;background:#141618;"></div>
+    <div class="field"><label>Finished Product Output (bags)</label><input type="number" id="editb_finishedBags" value="${b.finishedOutputBags||0}" oninput="updateEditBatchPreviews()"></div>
+    <div class="field"><label>≈ FP Output (kg)</label><input type="text" id="editb_finishedKgPreview" value="${fmt(b.finishedOutput||0)}" disabled style="opacity:0.65;background:#141618;"></div>`;
+  const basicView = `
     <div class="detail-item"><div class="dl">Line</div><div class="dv">${esc(lineName(plant,b.lineId))}</div></div>
     <div class="detail-item"><div class="dl">Variant</div><div class="dv">${esc(variantName(plant,b.variantId))}</div></div>
+    <div class="detail-item"><div class="dl">Shift</div><div class="dv">${esc(b.shiftLabel||'—')}</div></div>
     <div class="detail-item"><div class="dl">Batch Weight</div><div class="dv">${fmt(b.batchWeight)} kg</div></div>
-    <div class="detail-item"><div class="dl">Fines Weight</div><div class="dv">${fmt(b.finesWeight!=null?b.finesWeight:0)} kg</div></div>
-    <div class="detail-item"><div class="dl">Reject</div><div class="dv">${fmt(b.rejectBags!=null?b.rejectBags:0)} bags</div></div>
-    <div class="detail-item"><div class="dl">Finished Product Output</div><div class="dv">${fmt(b.finishedOutput)} kg</div></div>`;
-
+    <div class="detail-item"><div class="dl">Fines Weight</div><div class="dv">${fmt(b.finesWeight||0)} kg</div></div>
+    <div class="detail-item"><div class="dl">Yield Weight</div><div class="dv">${fmt(bm.yieldWeight)} kg</div></div>
+    <div class="detail-item"><div class="dl">Reject</div><div class="dv">${b.rejectBags!=null?fmt(b.rejectBags)+' bags / ':''}${fmt(bm.rejectKg)} kg</div></div>
+    <div class="detail-item"><div class="dl">Finished Product Output</div><div class="dv">${b.finishedOutputBags!=null?fmt(b.finishedOutputBags)+' bags / ':''}${fmt(b.finishedOutput||0)} kg</div></div>
+    <div class="detail-item"><div class="dl">Yield %</div><div class="dv">${bm.yieldPct.toFixed(1)}%</div></div>
+    <div class="detail-item"><div class="dl">Recovery %</div><div class="dv">${bm.recoveryPct.toFixed(1)}%</div></div>`;
   document.getElementById('modalRoot').innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
-      <div class="modal wide">
-        <h3>${b.date} — ${esc(b.shiftLabel||'—')} Shift — ${esc(lineName(plant,b.lineId))} ${editMode?'<span style="color:var(--amber);font-size:12px;">(Editing)</span>':''}</h3>
-        <div class="group-title">Batch Details ${editMode?'<span style="color:var(--amber);">— editable</span>':''}</div>
-        <div class="${editMode?'field-grid':'detail-grid'}">${editMode?basicInfoEdit:basicInfoView}</div>
-        ${!editMode ? `
-        <div class="group-title">Calculated</div>
-        <div class="detail-grid">
-          <div class="detail-item"><div class="dl">Yield Weight</div><div class="dv">${fmt(bm.yieldWeight)} kg</div></div>
-          <div class="detail-item"><div class="dl">Reject (kg)</div><div class="dv">${fmt(bm.rejectKg)} kg</div></div>
-          <div class="detail-item"><div class="dl">Yield %</div><div class="dv">${bm.yieldPct.toFixed(1)}%</div></div>
-          <div class="detail-item"><div class="dl">Recovery %</div><div class="dv">${bm.recoveryPct.toFixed(1)}%</div></div>
-        </div>` : `<div class="calc-note">Yield Weight, Yield %, and Recovery % will recompute automatically from the values above once saved.</div>`}
+      <div class="modal">
+        <h3>${b.date} — Batch Record ${editMode?'<span style="color:var(--amber);font-size:12px;">(Editing)</span>':''}</h3>
+        <div class="${editMode?'field-grid':'detail-grid'}">${editMode?basicEdit:basicView}</div>
         <div class="modal-actions">
           ${editMode
             ? `<button class="btn ghost" onclick="showBatchDetail('${b.id}', false)">Cancel</button><button class="btn" onclick="saveBatchEdit('${plant.id}','${b.id}')">Save Changes</button>`
-            : `<button class="btn ghost" onclick="closeModal()">Close</button><button class="btn" onclick="showBatchDetail('${b.id}', true)">Edit Batch</button>`}
+            : `<button class="btn ghost" onclick="closeModal()">Close</button><button class="btn" onclick="showBatchDetail('${b.id}', true)">Edit</button>`}
         </div>
       </div>
     </div>`;
 }
 async function saveBatchEdit(plantId, batchId){
   const g = id=>document.getElementById(id);
-  const v = id=>{ const el=g(id); return el ? (parseFloat(el.value)||0) : 0; };
   const plant = currentPlant();
-  const existingBatch = batchesCache.find(x=>x.id===batchId);
-  if(!existingBatch){ alert('Could not find this batch — it may have been deleted.'); closeModal(); return; }
-
-  const date = g('editb_date').value;
-  if(!date){ alert('Enter a date.'); return; }
   const lineId = g('editb_line').value, variantId = g('editb_variant').value;
   if(!lineId || !variantId || !lineObj(plant,lineId) || !variantObj(plant,variantId)){
     alert('Please select a valid Line and Variant.');
     return;
   }
-
+  const bagWeight = variantObj(plant, variantId).bagWeight||0;
+  const rejectBags = parseFloat(g('editb_rejectBags').value)||0;
+  const finishedBags = parseFloat(g('editb_finishedBags').value)||0;
   const updates = {
-    date, shiftLabel: g('editb_shift').value, lineId, variantId,
-    batchWeight: v('editb_batchWeight'),
-    finesWeight: v('editb_finesWeight'),
-    rejectBags: v('editb_rejectBags'),
-    finishedOutput: v('editb_finished')
+    date: g('editb_date').value,
+    shiftLabel: g('editb_shift').value,
+    lineId, variantId,
+    batchWeight: parseFloat(g('editb_batchWeight').value)||0,
+    finesWeight: parseFloat(g('editb_finesWeight').value)||0,
+    rejectBags,
+    finishedOutputBags: finishedBags,
+    finishedOutput: finishedBags*bagWeight
   };
   await db.collection('plants').doc(plantId).collection('batches').doc(batchId).update(updates);
   closeModal();
@@ -1785,7 +1783,10 @@ function renderDieTab(plant){
       <div id="dieSummaryWrap"></div>
     </div>
     <div class="panel">
-      <div class="panel-title">Die History</div>
+      <div class="panel-title" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <span>Die History</span>
+        <span style="display:flex;align-items:center;gap:8px;font-family:'JetBrains Mono';text-transform:none;letter-spacing:0;" id="dieFilterBar"></span>
+      </div>
       <div id="dieTableWrap"></div>
     </div>`;
   renderDieSummary(plant);
@@ -1810,11 +1811,16 @@ function renderDieSummary(plant){
       </tr>`).join('')}</tbody>
     </table>`;
 }
+function renderDieTable_refresh(){ const p=currentPlant(); if(p) renderDieTable(p); }
 function renderDieTable(plant){
   const wrap = document.getElementById('dieTableWrap');
   if(!wrap) return;
   const dieLines = (plant.lines||[]).filter(l=>l.type!=='Crumbler');
-  const groups = groupByLine(diesCache, dieLines);
+  const normalizedDies = diesCache.map(d=>({...d, _filterDate: dieEntryDate(d)}));
+  const filterBar = document.getElementById('dieFilterBar');
+  if(filterBar) filterBar.innerHTML = monthYearFilterControls('die', normalizedDies, '_filterDate', 'renderDieTable_refresh');
+  const filtered = filterByMonthYear(normalizedDies, 'die', '_filterDate');
+  const groups = groupByLine(filtered, dieLines);
   wrap.innerHTML = groups.length ? groups.map(g=>{
     const rows = g.items.map(d=>`<tr>
         <td>${dieEntryDate(d)}</td><td>${esc(d.shiftLabel||'—')}</td><td>${esc(d.dieId)}</td>
@@ -1867,31 +1873,67 @@ async function deleteDie(plantId, dieRecId){
 function renderReportTab(plant){
   const content = document.getElementById('tabContent');
   const nowYm = currentMonthLocalStr();
+  const today = todayLocalStr();
   content.innerHTML = `
     <div class="month-picker">
-      <span class="eyebrow">Reporting Month</span>
-      <input type="month" id="reportMonth" value="${nowYm}" onchange="buildReport('${plant.id}', this.value, document.getElementById('reportLine').value)">
+      <span class="eyebrow">Period</span>
+      <select id="reportPeriodType" onchange="onReportPeriodTypeChange('${plant.id}')">
+        <option value="monthly">Monthly</option>
+        <option value="weekly">Weekly</option>
+      </select>
+      <span class="eyebrow" id="reportMonthLabel">Month</span>
+      <input type="month" id="reportMonth" value="${nowYm}" onchange="buildReportFromControls('${plant.id}')">
+      <span class="eyebrow" id="reportWeekLabel" style="display:none;">Week Starting</span>
+      <input type="date" id="reportWeekAnchor" value="${today}" style="display:none;" onchange="buildReportFromControls('${plant.id}')">
       <span class="eyebrow">Line</span>
-      <select id="reportLine" onchange="buildReport('${plant.id}', document.getElementById('reportMonth').value, this.value)">
+      <select id="reportLine" onchange="buildReportFromControls('${plant.id}')">
         <option value="all">All Lines</option>
         ${plant.lines.map(l=>`<option value="${l.id}">${esc(l.name)}</option>`).join('')}
       </select>
       <button class="btn small" onclick="window.print()">Print / Export PDF</button>
     </div>
     <div id="reportBody"></div>`;
-  buildReport(plant.id, nowYm, 'all');
+  buildReport(plant.id, 'monthly', nowYm, 'all');
 }
-function buildReport(plantId, ym, lineFilter){
+function onReportPeriodTypeChange(plantId){
+  const type = document.getElementById('reportPeriodType').value;
+  document.getElementById('reportMonthLabel').style.display = type==='monthly'?'inline':'none';
+  document.getElementById('reportMonth').style.display = type==='monthly'?'inline-block':'none';
+  document.getElementById('reportWeekLabel').style.display = type==='weekly'?'inline':'none';
+  document.getElementById('reportWeekAnchor').style.display = type==='weekly'?'inline-block':'none';
+  buildReportFromControls(plantId);
+}
+function buildReportFromControls(plantId){
+  const type = document.getElementById('reportPeriodType')?.value || 'monthly';
+  const periodValue = type==='monthly' ? document.getElementById('reportMonth').value : document.getElementById('reportWeekAnchor').value;
+  const lineFilter = document.getElementById('reportLine').value;
+  buildReport(plantId, type, periodValue, lineFilter);
+}
+function buildReport(plantId, periodType, periodValue, lineFilter){
   lineFilter = lineFilter || 'all';
   const plant = currentPlant();
   const body = document.getElementById('reportBody');
 
-  let shiftList = shiftsCache.filter(s=>s.date.startsWith(ym));
-  let batchList = batchesCache.filter(b=>b.date.startsWith(ym));
+  let start, end, label, ym;
+  if(periodType==='weekly'){
+    const wr = getWeekRange(periodValue);
+    start = wr.start; end = wr.end;
+    label = `Week of ${wr.start} to ${wr.end}`;
+    ym = null;
+  } else {
+    ym = periodValue;
+    start = ym+'-01';
+    const daysInMonthForRange = new Date(parseInt(ym.slice(0,4)),parseInt(ym.slice(5,7)),0).getDate();
+    end = ym+'-'+String(daysInMonthForRange).padStart(2,'0');
+    label = monthLabel(ym);
+  }
+
+  let shiftList = shiftsCache.filter(s=>s.date>=start && s.date<=end);
+  let batchList = batchesCache.filter(b=>b.date>=start && b.date<=end);
   if(lineFilter!=='all'){ shiftList = shiftList.filter(s=>s.lineId===lineFilter); batchList = batchList.filter(b=>b.lineId===lineFilter); }
   shiftList.sort((a,b)=>a.date.localeCompare(b.date));
 
-  if(!shiftList.length && !batchList.length){ body.innerHTML = `<div class="no-data">No data logged for ${monthLabel(ym)}${lineFilter!=='all'?' on '+esc(lineName(plant,lineFilter)):''}.</div>`; return; }
+  if(!shiftList.length && !batchList.length){ body.innerHTML = `<div class="no-data">No data logged for ${esc(label)}${lineFilter!=='all'?' on '+esc(lineName(plant,lineFilter)):''}.</div>`; return; }
 
   const metrics = shiftList.map(s=>({s, m:shiftMetrics(s, plant)}));
 
@@ -1952,17 +1994,26 @@ function buildReport(plantId, ym, lineFilter){
     });
   });
 
-  // Daily good output chart
-  const daysInMonth = new Date(parseInt(ym.slice(0,4)),parseInt(ym.slice(5,7)),0).getDate();
+  // Daily good output chart (supports both monthly and weekly period types)
   const dayTotals={};
   metrics.forEach(x=>{ dayTotals[x.s.date]=(dayTotals[x.s.date]||0)+x.m.goodOutputKg; });
   const maxDay = Math.max(...Object.values(dayTotals),1);
-  let bars='',labels='';
-  for(let d=1; d<=daysInMonth; d++){
-    const ds=`${ym}-${String(d).padStart(2,'0')}`; const v=dayTotals[ds]||0;
-    bars += `<div class="bar" style="flex:1 1 0;min-width:0;background:${v>0?'var(--amber)':'var(--amber-dim)'};border-radius:2px 2px 0 0;height:${v>0?Math.max(4,(v/maxDay)*140):0}px" title="${ds}: ${fmt(v)} kg"></div>`;
-    labels += `<span style="flex:1 1 0;min-width:0;text-align:center;font-size:8.5px;color:var(--text-dim2);font-family:'JetBrains Mono';overflow:hidden;">${(d%5===0||d===1)?d:''}</span>`;
+  const chartDays = [];
+  if(periodType==='weekly'){
+    const dd = new Date(start+'T00:00:00');
+    for(let i=0;i<7;i++){ chartDays.push(localDateStr(dd)); dd.setDate(dd.getDate()+1); }
+  } else {
+    const daysInMonth = new Date(parseInt(ym.slice(0,4)),parseInt(ym.slice(5,7)),0).getDate();
+    for(let d=1; d<=daysInMonth; d++) chartDays.push(`${ym}-${String(d).padStart(2,'0')}`);
   }
+  let bars='',labels='';
+  chartDays.forEach(ds=>{
+    const v=dayTotals[ds]||0;
+    const dayNum = parseInt(ds.slice(8,10));
+    const showLabel = periodType==='weekly' ? true : (dayNum%5===0||dayNum===1);
+    bars += `<div class="bar" style="flex:1 1 0;min-width:0;background:${v>0?'var(--amber)':'var(--amber-dim)'};border-radius:2px 2px 0 0;height:${v>0?Math.max(4,(v/maxDay)*140):0}px" title="${ds}: ${fmt(v)} kg"></div>`;
+    labels += `<span style="flex:1 1 0;min-width:0;text-align:center;font-size:8.5px;color:var(--text-dim2);font-family:'JetBrains Mono';overflow:hidden;">${showLabel?dayNum:''}</span>`;
+  });
 
   // Section 4 — dies (tallied per Die ID; same Die ID always adds to its lifetime total)
   let dieList = [...diesCache];
@@ -1987,14 +2038,7 @@ function buildReport(plantId, ym, lineFilter){
       const ict = (plant.ict||{})[l.id+'_'+vid] || 0;
       const targetFeedrate = ict>0 ? ((3600/ict)/1000) : 0;
       const issuesHere = allIssues.filter(q=>vm.some(x=>x.s.id===q.shiftId));
-      // Bar data: total qty (bags) per issue type, ordered to match the
-      // fixed dropdown order — only issue types that were actually logged
-      // for this line+variant show up as bars.
-      const issueBagTotals = {};
-      issuesHere.forEach(q=>{ issueBagTotals[q.issue] = (issueBagTotals[q.issue]||0) + (q.qtyBags||0); });
-      const issueBars = {};
-      QUALITY_ISSUE_OPTIONS.forEach(opt=>{ if(issueBagTotals[opt]!=null) issueBars[opt]=issueBagTotals[opt]; });
-      return {variant, count:vm.length, avgActualFeedrate, targetFeedrate, issuesHere, issueBars};
+      return {variant, count:vm.length, avgActualFeedrate, targetFeedrate, issuesHere};
     }).filter(Boolean);
     return variantRows.length ? {line:l, variantRows} : null;
   }).filter(Boolean);
@@ -2007,7 +2051,7 @@ function buildReport(plantId, ym, lineFilter){
         <div class="stat-card"><div class="label">Total Batch Weight</div><div class="value">${fmt(totalBatchWeight)}</div><div class="sub">kg</div></div>
         <div class="stat-card"><div class="label">Total Yield Weight</div><div class="value">${fmt(totalYieldWeight)}</div><div class="sub">kg</div></div>
         <div class="stat-card"><div class="label">Overall Yield</div><div class="value accent">${overallYield.toFixed(1)}%</div><div class="sub">yield ÷ batch weight</div></div>
-        <div class="stat-card"><div class="label">Batches Logged</div><div class="value">${batchList.length}</div><div class="sub">${monthLabel(ym)}</div></div>
+        <div class="stat-card"><div class="label">Batches Logged</div><div class="value">${batchList.length}</div><div class="sub">${esc(label)}</div></div>
       </div>
       <div class="panel-title" style="margin-top:16px;">B. Raw Material Consumption by Variant (batch weight)</div>
       ${hbarTable(rawByVariant,'kg')}
@@ -2039,22 +2083,13 @@ function buildReport(plantId, ym, lineFilter){
       ${lineVariantGroups.length ? lineVariantGroups.map(g=>`
         <div class="sub-block" style="margin-top:10px;">
           <div style="font-size:11px;color:var(--amber);font-family:'JetBrains Mono';margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">${esc(g.line.name)} — ${esc(g.line.type)}</div>
-          ${g.variantRows.map(v=>{
-            const detailId = 'qdetail_'+uid('');
-            return `
+          ${g.variantRows.map(v=>`
             <div style="margin-bottom:12px;">
-              <div onclick="toggleQualityDetail('${detailId}', this)" style="cursor:pointer;font-size:10.5px;color:var(--text-dim);font-family:'JetBrains Mono';margin-bottom:4px;display:flex;align-items:center;gap:6px;">
-                <span class="qdetail-caret" style="display:inline-block;transition:transform 0.15s;">▶</span>${v.variant?esc(v.variant.name):'—'}
-                <span style="color:var(--text-dim2);font-weight:normal;">(click to view logged entries)</span>
-              </div>
-              ${Object.keys(v.issueBars).length ? hbarTable(v.issueBars,'bags') : `<div class="no-data">No issues logged.</div>`}
-              <div id="${detailId}" style="display:none;margin-top:8px;">
-                <table><thead><tr><th>Date</th><th>Shift</th><th>Issue</th><th class="num">Qty (bags)</th><th class="num">Qty (kg)</th><th>Root Cause</th></tr></thead>
-                  <tbody>${v.issuesHere.length ? v.issuesHere.map(q=>`<tr><td>${q.date}</td><td>${q.shift}</td><td>${esc(q.issue)}</td><td class="num">${q.qtyBags!=null?fmt(q.qtyBags):'—'}</td><td class="num">${fmt(q.qtyKg!=null?q.qtyKg:(q.qty||0))}</td><td>${esc(q.rootCause)}</td></tr>`).join('') : `<tr><td colspan="6" class="no-data">No issues logged.</td></tr>`}</tbody>
-                </table>
-              </div>
-            </div>`;
-          }).join('')}
+              <div style="font-size:10.5px;color:var(--text-dim);font-family:'JetBrains Mono';margin-bottom:4px;">${v.variant?esc(v.variant.name):'—'}</div>
+              <table><thead><tr><th>Date</th><th>Shift</th><th>Issue</th><th class="num">Qty (bags)</th><th class="num">Qty (kg)</th><th>Root Cause</th></tr></thead>
+                <tbody>${v.issuesHere.length ? v.issuesHere.map(q=>`<tr><td>${q.date}</td><td>${q.shift}</td><td>${esc(q.issue)}</td><td class="num">${q.qtyBags!=null?fmt(q.qtyBags):'—'}</td><td class="num">${fmt(q.qtyKg!=null?q.qtyKg:(q.qty||0))}</td><td>${esc(q.rootCause)}</td></tr>`).join('') : `<tr><td colspan="6" class="no-data">No issues logged.</td></tr>`}</tbody>
+              </table>
+            </div>`).join('')}
         </div>`).join('') : `<div class="no-data">No data available.</div>`}
 
       <div class="panel-title" style="margin-top:16px;">D. Corrective Actions and Effectiveness — by Line + Variant</div>
