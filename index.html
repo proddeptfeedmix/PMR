@@ -268,6 +268,8 @@ let lastShiftDate = todayLocalStr();
 let lastShiftLabel = 'Day';
 let plantsUnsub=null, shiftsUnsub=null, diesUnsub=null, batchesUnsub=null;
 let draftQuality = [];
+const QUALITY_ISSUE_OPTIONS = ['LOW FE','3 IN 1','2 IN 1','2 COLORS','HIGH TEMP','MOISTURE','TEXTURE','COMPACT','LENGTH/OVERSIZED','FINES'];
+let draftEditQuality = []; // existing shift's quality issues being edited in Edit Parameters mode
 let draftFollowUps = []; // new follow-up corrective actions being added in Edit mode (appended on save, never replaces history)
 let userAccounts = [];       // roles collection cache (admin only)
 
@@ -355,6 +357,7 @@ function subscribePlantData(plantId){
   shiftsUnsub = db.collection('plants').doc(plantId).collection('shifts').onSnapshot(snap=>{
     shiftsCache = snap.docs.map(d=>({id:d.id,...d.data()}));
     render();
+    backfillQualityKg(plantId);
   });
   diesUnsub = db.collection('plants').doc(plantId).collection('dies').onSnapshot(snap=>{
     diesCache = snap.docs.map(d=>({id:d.id,...d.data()}));
@@ -902,6 +905,14 @@ function groupByLine(list, lines){
     return {line, items};
   });
 }
+function toggleQualityDetail(id, headerEl){
+  const el = document.getElementById(id);
+  if(!el) return;
+  const showing = el.style.display !== 'none';
+  el.style.display = showing ? 'none' : 'block';
+  const caret = headerEl.querySelector('.qdetail-caret');
+  if(caret) caret.style.transform = showing ? '' : 'rotate(90deg)';
+}
 function hbarTable(dataObj, unit, decimals){
   const entries = Object.entries(dataObj);
   if(!entries.length) return `<div class="no-data">No data available.</div>`;
@@ -1181,6 +1192,70 @@ function currentDraftBagWeight(){
   const variant = variantObj(plant, variantId);
   return variant ? (variant.bagWeight||0) : 0;
 }
+function currentEditDraftBagWeight(){
+  const plant = currentPlant();
+  if(!plant) return 0;
+  const variantId = document.getElementById('edit_variantId')?.value;
+  const variant = variantObj(plant, variantId);
+  return variant ? (variant.bagWeight||0) : 0;
+}
+function renderEditQualityRows(){
+  const wrap = document.getElementById('editQualityRows');
+  if(!wrap) return;
+  if(!draftEditQuality.length){ wrap.innerHTML = `<div style="color:var(--text-dim2);font-size:12px;">No quality issues logged for this shift.</div>`; return; }
+  const bagWeight = currentEditDraftBagWeight();
+  wrap.innerHTML = draftEditQuality.map((q,i)=>`
+    <div class="sub-block">
+      <div class="grid-row"><div class="field" style="width:100%;"><label>Issue</label><select onchange="updateEditQuality(${i},'issue',this.value)">
+        <option value="" ${!q.issue?'selected':''} disabled>Select issue…</option>
+        ${QUALITY_ISSUE_OPTIONS.map(opt=>`<option ${q.issue===opt?'selected':''}>${opt}</option>`).join('')}
+      </select></div></div>
+      <div class="grid-row" style="margin-top:8px;">
+        <div class="field"><label>Qty Affected (bags)</label><input type="number" value="${q.qtyBags||0}" oninput="updateEditQuality(${i},'qtyBags',this.value)"></div>
+        <div class="field"><label>≈ Weight (kg)</label><input type="text" id="editQtyKgPreview_${i}" value="${fmt((q.qtyBags||0)*bagWeight)}" disabled style="opacity:0.65;background:#141618;"></div>
+        <div class="field" style="flex:1;"><label>Root Cause</label><input type="text" value="${esc(q.rootCause)}" onchange="updateEditQuality(${i},'rootCause',this.value)"></div>
+      </div>
+      <div class="grid-row" style="margin-top:8px;">
+        <div class="field" style="flex:1;"><label>Corrective Action</label><input type="text" value="${esc(q.action)}" onchange="updateEditQuality(${i},'action',this.value)"></div>
+        <div class="field"><label>Effectiveness</label><select onchange="updateEditQuality(${i},'effectiveness',this.value)">
+          <option ${q.effectiveness==='Pending'?'selected':''}>Pending</option>
+          <option ${q.effectiveness==='Effective'?'selected':''}>Effective</option>
+          <option ${q.effectiveness==='Partially Effective'?'selected':''}>Partially Effective</option>
+          <option ${q.effectiveness==='Not Effective'?'selected':''}>Not Effective</option>
+        </select></div>
+        <button class="del-btn" onclick="removeEditQualityRow(${i})" style="align-self:center;">✕</button>
+      </div>
+    </div>`).join('');
+}
+function addEditQualityRow(){ draftEditQuality.push({issue:'',qtyBags:0,rootCause:'',action:'',effectiveness:'Pending'}); renderEditQualityRows(); }
+function removeEditQualityRow(i){ draftEditQuality.splice(i,1); renderEditQualityRows(); }
+function updateEditQuality(i,key,val){
+  draftEditQuality[i][key] = key==='qtyBags' ? (parseFloat(val)||0) : val;
+  if(key==='qtyBags'){
+    const preview = document.getElementById('editQtyKgPreview_'+i);
+    if(preview) preview.value = fmt(draftEditQuality[i].qtyBags * currentEditDraftBagWeight());
+  }
+}
+// One-time backfill: older quality entries saved with qtyBags but no qtyKg get
+// qtyKg filled from that shift's variant bag weight. Nothing else is touched;
+// it only writes shifts that still have a gap, so it stops once filled.
+let backfillInFlight = false;
+async function backfillQualityKg(plantId){
+  if(backfillInFlight) return;
+  const plant = plants.find(p=>p.id===plantId);
+  if(!plant) return;
+  const toFix = shiftsCache.filter(s=>(s.quality||[]).some(q=>(q.qtyBags||0)>0 && q.qtyKg==null));
+  if(!toFix.length) return;
+  backfillInFlight = true;
+  try{
+    for(const s of toFix){
+      const variant = variantObj(plant, s.variantId);
+      const bagWeight = variant ? (variant.bagWeight||0) : 0;
+      const fixedQuality = (s.quality||[]).map(q=>(q.qtyKg==null && (q.qtyBags||0)>0) ? {...q, qtyKg:(q.qtyBags||0)*bagWeight} : q);
+      await db.collection('plants').doc(plantId).collection('shifts').doc(s.id).update({quality: fixedQuality});
+    }
+  } finally { backfillInFlight = false; }
+}
 function renderQualityRows(){
   const wrap = document.getElementById('qualityRows');
   if(!wrap) return;
@@ -1188,7 +1263,10 @@ function renderQualityRows(){
   const bagWeight = currentDraftBagWeight();
   wrap.innerHTML = draftQuality.map((q,i)=>`
     <div class="sub-block">
-      <div class="grid-row"><div class="field" style="width:100%;"><label>Issue (free text)</label><input type="text" value="${esc(q.issue)}" onchange="updateQuality(${i},'issue',this.value)" placeholder="e.g. Excess fines in batch"></div></div>
+      <div class="grid-row"><div class="field" style="width:100%;"><label>Issue</label><select onchange="updateQuality(${i},'issue',this.value)">
+        <option value="" ${!q.issue?'selected':''} disabled>Select issue…</option>
+        ${QUALITY_ISSUE_OPTIONS.map(opt=>`<option ${q.issue===opt?'selected':''}>${opt}</option>`).join('')}
+      </select></div></div>
       <div class="grid-row" style="margin-top:8px;">
         <div class="field"><label>Qty Affected (bags)</label><input type="number" value="${q.qtyBags||0}" oninput="updateQuality(${i},'qtyBags',this.value)"></div>
         <div class="field"><label>≈ Weight (kg)</label><input type="text" id="qtyKgPreview_${i}" value="${fmt((q.qtyBags||0)*bagWeight)}" disabled style="opacity:0.65;background:#141618;"></div>
@@ -1330,7 +1408,7 @@ function showShiftDetail(shiftId, editMode){
   const m = shiftMetrics(s, plant);
   const oc = oeeClass(m.oee);
   const dryer = s.dryer||{};
-  if(editMode) draftFollowUps = [];
+  if(editMode){ draftFollowUps = []; draftEditQuality = (s.quality||[]).map(q=>({...q})); }
   const dryerItems = editMode
     ? Array.from({length:DRYER_ZONES},(_,i)=>i+1).map(i=>detailOrField('T'+i, dryer['t'+i], 'edit_dryer_t'+i, true)).join('')
     : Object.keys(dryer).map(k=>`<div class="detail-item"><div class="dl">${k.toUpperCase()}</div><div class="dv">${dryer[k]}</div></div>`).join('');
@@ -1432,7 +1510,9 @@ function showShiftDetail(shiftId, editMode){
           <div class="detail-item"><div class="dl">Quality</div><div class="dv">${m.qualityRate.toFixed(1)}%</div></div>
           <div class="detail-item"><div class="dl">OEE</div><div class="dv"><span class="badge ${oc.cls}">${m.oee.toFixed(1)}% — ${oc.label}</span></div></div>
         </div>` : `<div class="calc-note">OEE, Availability, Performance, Quality, Power and SME will recompute automatically from the values above once saved.</div>`}
-        ${(s.quality&&s.quality.length) ? `<div class="group-title">Quality Issues <span style="color:var(--text-dim2);font-weight:normal;">(not editable — use Follow-Up below to log new corrective attempts)</span></div>` + s.quality.map(q=>`<div class="sub-block"><b>${esc(q.issue)}</b> — ${q.qtyBags!=null?fmt(q.qtyBags)+' bags / ':''}${fmt(q.qtyKg!=null?q.qtyKg:(q.qty||0))} kg<br><span style="color:var(--text-dim2);">Root cause: ${esc(q.rootCause)} · Action: ${esc(q.action)} · ${q.effectiveness}</span></div>`).join('') : ''}
+        ${editMode
+            ? `<div class="group-title">Quality Issues <span style="color:var(--amber);">— editable</span></div><div id="editQualityRows"></div><button class="btn small" style="background:var(--panel-2);color:var(--amber);border:1px dashed var(--amber-dim);margin-top:8px;" onclick="addEditQualityRow()">+ Add Quality Issue</button>`
+            : ((s.quality&&s.quality.length) ? `<div class="group-title">Quality Issues</div>` + s.quality.map(q=>`<div class="sub-block"><b>${esc(q.issue)}</b> — ${q.qtyBags!=null?fmt(q.qtyBags)+' bags / ':''}${fmt(q.qtyKg!=null?q.qtyKg:(q.qty||0))} kg<br><span style="color:var(--text-dim2);">Root cause: ${esc(q.rootCause)} · Action: ${esc(q.action)} · ${q.effectiveness}</span></div>`).join('') : '')}
         ${followUpSection}
         <div class="modal-actions">
           ${editMode
@@ -1441,7 +1521,7 @@ function showShiftDetail(shiftId, editMode){
         </div>
       </div>
     </div>`;
-  if(editMode) renderFollowUpRows();
+  if(editMode){ renderFollowUpRows(); renderEditQualityRows(); }
 }
 function updateEditActualOutputPreview(){
   const v = id=>parseFloat(document.getElementById(id)?.value)||0;
@@ -1519,6 +1599,7 @@ async function saveShiftEdit(plantId, shiftId){
   const orderDetails = g('edit_orderDetails').value;
   const newFollowUps = draftFollowUps.filter(f=>f.action.trim()!=='');
   const followUps = [...(existingShift.followUps||[]), ...newFollowUps];
+  const quality = draftEditQuality.filter(q=>q.issue.trim()!=='').map(q=>({...q, qtyKg:(q.qtyBags||0)*variantObj(plant,variantId).bagWeight}));
 
   const updates = {
     date: g('edit_date').value,
@@ -1537,10 +1618,11 @@ async function saveShiftEdit(plantId, shiftId){
     bedTop:v('edit_bedTop'), bedBottom:v('edit_bedBottom'),
     moisture:v('edit_moisture'), floatEff:v('edit_floatEff'), bulkDensity:v('edit_bulkDensity'),
     motorLoadAmp:v('edit_motorLoadAmp'), voltage:v('edit_voltage'), powerFactor:v('edit_powerFactor'), efficiency:v('edit_efficiency'), feedrateTonHr:v('edit_feedrateTonHr'),
-    dryer, followUps
+    dryer, followUps, quality
   };
   await db.collection('plants').doc(plantId).collection('shifts').doc(shiftId).update(updates);
   draftFollowUps = [];
+  draftEditQuality = [];
   closeModal();
 }
 
@@ -2038,7 +2120,11 @@ function buildReport(plantId, periodType, periodValue, lineFilter){
       const ict = (plant.ict||{})[l.id+'_'+vid] || 0;
       const targetFeedrate = ict>0 ? ((3600/ict)/1000) : 0;
       const issuesHere = allIssues.filter(q=>vm.some(x=>x.s.id===q.shiftId));
-      return {variant, count:vm.length, avgActualFeedrate, targetFeedrate, issuesHere};
+      const issueBagTotals = {};
+      issuesHere.forEach(q=>{ issueBagTotals[q.issue] = (issueBagTotals[q.issue]||0) + (q.qtyBags||0); });
+      const issueBars = {};
+      QUALITY_ISSUE_OPTIONS.forEach(opt=>{ if(issueBagTotals[opt]!=null) issueBars[opt]=issueBagTotals[opt]; });
+      return {variant, count:vm.length, avgActualFeedrate, targetFeedrate, issuesHere, issueBars};
     }).filter(Boolean);
     return variantRows.length ? {line:l, variantRows} : null;
   }).filter(Boolean);
@@ -2083,13 +2169,22 @@ function buildReport(plantId, periodType, periodValue, lineFilter){
       ${lineVariantGroups.length ? lineVariantGroups.map(g=>`
         <div class="sub-block" style="margin-top:10px;">
           <div style="font-size:11px;color:var(--amber);font-family:'JetBrains Mono';margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">${esc(g.line.name)} — ${esc(g.line.type)}</div>
-          ${g.variantRows.map(v=>`
+          ${g.variantRows.map(v=>{
+            const detailId = 'qdetail_'+uid('');
+            return `
             <div style="margin-bottom:12px;">
-              <div style="font-size:10.5px;color:var(--text-dim);font-family:'JetBrains Mono';margin-bottom:4px;">${v.variant?esc(v.variant.name):'—'}</div>
-              <table><thead><tr><th>Date</th><th>Shift</th><th>Issue</th><th class="num">Qty (bags)</th><th class="num">Qty (kg)</th><th>Root Cause</th></tr></thead>
+              <div onclick="toggleQualityDetail('${detailId}', this)" style="cursor:pointer;font-size:10.5px;color:var(--text-dim);font-family:'JetBrains Mono';margin-bottom:4px;display:flex;align-items:center;gap:6px;">
+                <span class="qdetail-caret" style="display:inline-block;transition:transform 0.15s;">▶</span>${v.variant?esc(v.variant.name):'—'}
+                <span style="color:var(--text-dim2);font-weight:normal;">(click to view logged entries)</span>
+              </div>
+              ${Object.keys(v.issueBars).length ? hbarTable(v.issueBars,'bags') : `<div class="no-data">No issues logged.</div>`}
+              <div id="${detailId}" style="display:none;margin-top:8px;">
+                <table><thead><tr><th>Date</th><th>Shift</th><th>Issue</th><th class="num">Qty (bags)</th><th class="num">Qty (kg)</th><th>Root Cause</th></tr></thead>
                 <tbody>${v.issuesHere.length ? v.issuesHere.map(q=>`<tr><td>${q.date}</td><td>${q.shift}</td><td>${esc(q.issue)}</td><td class="num">${q.qtyBags!=null?fmt(q.qtyBags):'—'}</td><td class="num">${fmt(q.qtyKg!=null?q.qtyKg:(q.qty||0))}</td><td>${esc(q.rootCause)}</td></tr>`).join('') : `<tr><td colspan="6" class="no-data">No issues logged.</td></tr>`}</tbody>
-              </table>
-            </div>`).join('')}
+                </table>
+              </div>
+            </div>`;
+          }).join('')}
         </div>`).join('') : `<div class="no-data">No data available.</div>`}
 
       <div class="panel-title" style="margin-top:16px;">D. Corrective Actions and Effectiveness — by Line + Variant</div>
