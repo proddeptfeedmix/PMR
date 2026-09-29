@@ -691,9 +691,17 @@ async function generateCompanyReport(){
     allShifts.forEach(s=>(s.quality||[]).forEach(q=>{
       const key = (q.issue||'').trim();
       if(!key) return;
-      if(!companyIssueTally[key]) companyIssueTally[key] = {bags:0, kg:0};
-      companyIssueTally[key].bags += (q.qtyBags||0);
-      companyIssueTally[key].kg += (q.qtyKg!=null?q.qtyKg:(q.qty||0));
+      if(!companyIssueTally[key]) companyIssueTally[key] = {bags:0, kg:0, detail:{}};
+      const qBags = (q.qtyBags||0);
+      const qKg = (q.qtyKg!=null?q.qtyKg:(q.qty||0));
+      companyIssueTally[key].bags += qBags;
+      companyIssueTally[key].kg += qKg;
+      // Breakdown by Plant -> Line -> Variant (used when an issue row is clicked)
+      const dk = plant.id+'|'+(s.lineId||'')+'|'+(s.variantId||'');
+      const dd = companyIssueTally[key].detail;
+      if(!dd[dk]) dd[dk] = {plant, lineId:s.lineId||'', variantId:s.variantId||'', bags:0, kg:0};
+      dd[dk].bags += qBags;
+      dd[dk].kg += qKg;
     }));
     // NOTE: "Finished Product" here is defined as Excellent + Good + Project bags
     // (everything except Reject) — this is specific to the Company Report's Plant
@@ -802,6 +810,45 @@ async function generateCompanyReport(){
 
   const issueTallyRows = Object.entries(companyIssueTally).sort((a,b)=>b[1].kg-a[1].kg);
 
+  // Builds the Plant -> Line -> Variant breakdown (with subtotals + % share of the issue total)
+  const issueBreakdownHtml = (t)=>{
+    const pct = (kg,bags)=>{
+      const p = t.kg>0 ? kg/t.kg*100 : (t.bags>0 ? bags/t.bags*100 : 0);
+      return p.toFixed(1)+'%';
+    };
+    const entries = Object.values(t.detail||{});
+    let rowsHtml = '';
+    plants.forEach(pl=>{
+      const pe = entries.filter(e=>e.plant.id===pl.id);
+      if(!pe.length) return;
+      const pBags = pe.reduce((a,e)=>a+e.bags,0), pKg = pe.reduce((a,e)=>a+e.kg,0);
+      rowsHtml += `<tr style="background:var(--panel-3);font-weight:600;"><td>${esc(pl.name)}</td><td class="num">${fmt(pBags)}</td><td class="num">${fmt(pKg)}</td><td class="num">${pct(pKg,pBags)}</td></tr>`;
+      // Lines in the plant's configured order; any line no longer configured goes last
+      const lineIds = (pl.lines||[]).map(l=>l.id);
+      pe.forEach(e=>{ if(!lineIds.includes(e.lineId)) lineIds.push(e.lineId); });
+      [...new Set(lineIds)].forEach(lid=>{
+        const le = pe.filter(e=>e.lineId===lid);
+        if(!le.length) return;
+        const lBags = le.reduce((a,e)=>a+e.bags,0), lKg = le.reduce((a,e)=>a+e.kg,0);
+        const lObj = (pl.lines||[]).find(l=>l.id===lid);
+        rowsHtml += `<tr style="font-weight:600;"><td style="padding-left:24px;color:var(--amber);">${lObj?esc(lObj.name):'(Removed line)'}</td><td class="num">${fmt(lBags)}</td><td class="num">${fmt(lKg)}</td><td class="num">${pct(lKg,lBags)}</td></tr>`;
+        // Variants in the plant's configured order; any removed variant goes last
+        const varIds = (pl.variants||[]).map(v=>v.id);
+        le.forEach(e=>{ if(!varIds.includes(e.variantId)) varIds.push(e.variantId); });
+        [...new Set(varIds)].forEach(vid=>{
+          const ve = le.find(e=>e.variantId===vid);
+          if(!ve) return;
+          const vObj = variantObj(pl, vid);
+          rowsHtml += `<tr><td style="padding-left:48px;">${vObj?esc(vObj.name):'(Removed variant)'}</td><td class="num">${fmt(ve.bags)}</td><td class="num">${fmt(ve.kg)}</td><td class="num">${pct(ve.kg,ve.bags)}</td></tr>`;
+        });
+      });
+    });
+    return `<table style="margin:6px 0;">
+      <thead><tr><th>Plant / Line / Variant</th><th class="num">Qty (bags)</th><th class="num">Qty (kg)</th><th class="num">% of Issue Total</th></tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>`;
+  };
+
   body.innerHTML = `
     <div class="calc-note" style="margin-bottom:12px;">Showing ${esc(label)}</div>
     <div class="panel-title">Plant Summary — click a plant to expand (grouped by Line → Variant)</div>
@@ -809,10 +856,10 @@ async function generateCompanyReport(){
     ${plantSummaryHtml}
 
     <div class="panel-title" style="margin-top:24px;">Total Non-Conformance by Issue — All Plants</div>
-    <div class="calc-note" style="margin-bottom:10px;">Total quantity affected (bags/kg) for each distinct quality issue logged, summed across every plant this period. Sorted by kg affected, highest first.</div>
+    <div class="calc-note" style="margin-bottom:10px;">Total quantity affected (bags/kg) for each distinct quality issue logged, summed across every plant this period. Sorted by kg affected, highest first. Click an issue to see which plant, line and variant contributes to it.</div>
     <table>
       <thead><tr><th>Non-Conformance (Issue)</th><th class="num">Total Qty (bags)</th><th class="num">Total Qty (kg)</th></tr></thead>
-      <tbody>${issueTallyRows.length ? issueTallyRows.map(([issue,t])=>`<tr><td>${esc(issue)}</td><td class="num">${fmt(t.bags)}</td><td class="num">${fmt(t.kg)}</td></tr>`).join('') : `<tr><td colspan="3" class="no-data">No quality issues logged this period.</td></tr>`}</tbody>
+      <tbody>${issueTallyRows.length ? issueTallyRows.map(([issue,t],i)=>`<tr style="cursor:pointer;" onclick="toggleIssueBreakdown('issueBd_${i}', this)" title="Click to see Plant / Line / Variant breakdown"><td><span class="qdetail-caret" style="display:inline-block;transition:transform .15s;margin-right:6px;color:var(--amber);">▶</span>${esc(issue)}</td><td class="num">${fmt(t.bags)}</td><td class="num">${fmt(t.kg)}</td></tr><tr id="issueBd_${i}" style="display:none;"><td colspan="3" style="padding:4px 0 12px 24px;background:var(--panel-2);">${issueBreakdownHtml(t)}</td></tr>`).join('') : `<tr><td colspan="3" class="no-data">No quality issues logged this period.</td></tr>`}</tbody>
     </table>
 
     <div class="panel-title" style="margin-top:24px;">Line Performance — click a plant to expand (grouped by Line → Variant)</div>
@@ -911,6 +958,14 @@ function toggleQualityDetail(id, headerEl){
   const showing = el.style.display !== 'none';
   el.style.display = showing ? 'none' : 'block';
   const caret = headerEl.querySelector('.qdetail-caret');
+  if(caret) caret.style.transform = showing ? '' : 'rotate(90deg)';
+}
+function toggleIssueBreakdown(id, rowEl){
+  const el = document.getElementById(id);
+  if(!el) return;
+  const showing = el.style.display !== 'none';
+  el.style.display = showing ? 'none' : 'table-row';
+  const caret = rowEl.querySelector('.qdetail-caret');
   if(caret) caret.style.transform = showing ? '' : 'rotate(90deg)';
 }
 function hbarTable(dataObj, unit, decimals){
