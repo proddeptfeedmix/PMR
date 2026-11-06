@@ -628,6 +628,10 @@ function getWeekRange(anchorDateStr){
   const sunday = new Date(monday); sunday.setDate(monday.getDate()+6);
   return {start:localDateStr(monday), end:localDateStr(sunday)};
 }
+// Company Report display state (view-only; nothing here is ever written to the database)
+let companyNcMonthly = {};      // year -> 12 monthly cells {shifts,bags,kg,outKg}
+let ncChartYear = null, ncChartMetric = 'kg';
+let companyPlantData = [], psSelected = 'all', _psPrev = null;
 function renderCompanyReport(){
   const main = document.getElementById('mainArea');
   const today = todayLocalStr();
@@ -682,11 +686,28 @@ async function generateCompanyReport(){
   // Build per-plant structured data: plant -> lines -> variants
   const plantData = [];
   const companyIssueTally = {}; // issue text -> {bags, kg}
+  const ncMonthly = {};         // year -> 12 monthly cells, used by the trend chart
   for(const plant of plants){
     let shiftsSnap;
     try{ shiftsSnap = await db.collection('plants').doc(plant.id).collection('shifts').get(); }
     catch(e){ plantData.push({plant, lineGroups:[], totalFinishedProductBags:0, totalFinishedProductKg:0, totalRejectKg:0, avgOee:0, shiftCount:0}); continue; }
-    const allShifts = shiftsSnap.docs.map(d=>({id:d.id,...d.data()})).filter(s=>s.date>=start && s.date<=end);
+    const rawShifts = shiftsSnap.docs.map(d=>({id:d.id,...d.data()}));
+    const allShifts = rawShifts.filter(s=>s.date>=start && s.date<=end);
+    // Year-wide monthly tally for the trend chart (read-only: uses existing records, writes nothing)
+    rawShifts.forEach(s=>{
+      if(!s.date || s.date.length<7) return;
+      const yr = s.date.slice(0,4), mo = parseInt(s.date.slice(5,7),10)-1;
+      if(isNaN(mo) || mo<0 || mo>11) return;
+      if(!ncMonthly[yr]) ncMonthly[yr] = Array.from({length:12},()=>({shifts:0,bags:0,kg:0,outKg:0}));
+      const cell = ncMonthly[yr][mo];
+      cell.shifts++;
+      cell.outKg += shiftMetrics(s,plant).totalOutputKg;
+      (s.quality||[]).forEach(q=>{
+        if(!(q.issue||'').trim()) return;
+        cell.bags += (q.qtyBags||0);
+        cell.kg += (q.qtyKg!=null?q.qtyKg:(q.qty||0));
+      });
+    });
     const metrics = allShifts.map(s=>({s,m:shiftMetrics(s,plant)}));
     allShifts.forEach(s=>(s.quality||[]).forEach(q=>{
       const key = (q.issue||'').trim();
@@ -732,7 +753,7 @@ async function generateCompanyReport(){
         const finishedProductBags = vm.reduce((a,x)=>a+(x.s.excellentBags||0)+(x.s.goodBags||0)+(x.s.projectBags||0),0);
         const finishedProductKg = vm.reduce((a,x)=>a+((x.s.excellentBags||0)+(x.s.goodBags||0)+(x.s.projectBags||0))*x.m.bagWeight,0);
         return {
-          variant, count:vm.length,
+          variant, count:vm.length, causeCounts,
           finishedProductBags, finishedProductKg,
           rejectKg: vm.reduce((a,x)=>a+x.m.rejectKg,0),
           availability: avg(vm.map(x=>x.m.availability)),
@@ -751,31 +772,12 @@ async function generateCompanyReport(){
 
   if(!body) return;
 
-  const plantSummaryHtml = plantData.map(pd=>{
-    const oc = oeeClass(pd.avgOee);
-    return `<details class="sub-block" style="margin-top:12px;">
-      <summary style="cursor:pointer;font-family:'JetBrains Mono';font-size:12px;color:var(--text);">
-        ${esc(pd.plant.name)} <span style="color:var(--text-dim2);">— ${fmt(pd.totalFinishedProductBags)} bags / ${fmt(pd.totalFinishedProductKg)} kg finished product · ${fmt(pd.totalRejectKg)} kg reject · ${pd.shiftCount} shifts</span>
-        ${pd.shiftCount?`<span class="badge ${oc.cls}" style="margin-left:8px;">${pd.avgOee.toFixed(1)}% OEE</span>`:'<span class="badge badge-dim" style="margin-left:8px;">No data</span>'}
-      </summary>
-      <div style="margin-top:12px;">
-      ${pd.lineGroups.length ? pd.lineGroups.map(lg=>`
-        <div style="margin-bottom:14px;">
-          <div style="font-size:11.5px;color:var(--amber);font-family:'JetBrains Mono';margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">${esc(lg.line.name)} — ${esc(lg.line.type)}</div>
-          <table>
-            <thead><tr><th>Variant</th><th class="num">Finished Product (bags)</th><th class="num">Finished Product (kg)</th><th class="num">Reject (kg)</th><th>Top Root Causes (occurrences)</th></tr></thead>
-            <tbody>${lg.variantRows.map(vr=>`<tr>
-              <td>${vr.variant?esc(vr.variant.name):'—'}</td>
-              <td class="num">${fmt(vr.finishedProductBags)}</td>
-              <td class="num">${fmt(vr.finishedProductKg)}</td>
-              <td class="num">${fmt(vr.rejectKg)}</td>
-              <td>${vr.topCauses.length? vr.topCauses.map(([c,n])=>`${esc(c)} (${n})`).join(', ') : '—'}</td>
-            </tr>`).join('')}</tbody>
-          </table>
-        </div>`).join('') : `<div class="no-data">No shift data logged this period.</div>`}
-      </div>
-    </details>`;
-  }).join('');
+  // Plant Summary is now a dashboard (plant tabs + All Plants view); see plantDashHtml()
+  companyPlantData = plantData;
+  if(psSelected!=='all' && !plantData.some(pd=>pd.plant.id===psSelected)) psSelected = 'all';
+  const plantSummaryHtml = `<div id="plantSummaryDash">${plantDashHtml()}</div>`;
+  companyNcMonthly = ncMonthly;
+  if(!ncChartYear || !ncMonthly[ncChartYear]) ncChartYear = (ncMonthly[start.slice(0,4)] ? start.slice(0,4) : (Object.keys(ncMonthly).sort().pop() || start.slice(0,4)));
 
   const linePerfHtml = plantData.map(pd=>{
     const oc = oeeClass(pd.avgOee);
@@ -851,7 +853,7 @@ async function generateCompanyReport(){
 
   body.innerHTML = `
     <div class="calc-note" style="margin-bottom:12px;">Showing ${esc(label)}</div>
-    <div class="panel-title">Plant Summary — click a plant to expand (grouped by Line → Variant)</div>
+    <div class="panel-title">Plant Summary — pick a plant, or view all plants at once (Line → Variant)</div>
     <div class="calc-note" style="margin-bottom:10px;">Finished Product here = Excellent + Good + Project bags (everything except Reject). This is specific to this report — elsewhere in the app, "good output" means Excellent + Good only.</div>
     ${plantSummaryHtml}
 
@@ -862,10 +864,161 @@ async function generateCompanyReport(){
       <tbody>${issueTallyRows.length ? issueTallyRows.map(([issue,t],i)=>`<tr style="cursor:pointer;" onclick="toggleIssueBreakdown('issueBd_${i}', this)" title="Click to see Plant / Line / Variant breakdown"><td><span class="qdetail-caret" style="display:inline-block;transition:transform .15s;margin-right:6px;color:var(--amber);">▶</span>${esc(issue)}</td><td class="num">${fmt(t.bags)}</td><td class="num">${fmt(t.kg)}</td></tr><tr id="issueBd_${i}" style="display:none;"><td colspan="3" style="padding:4px 0 12px 24px;background:var(--panel-2);">${issueBreakdownHtml(t)}</td></tr>`).join('') : `<tr><td colspan="3" class="no-data">No quality issues logged this period.</td></tr>`}</tbody>
     </table>
 
+    <div class="panel-title" style="margin-top:24px;">Non-Conformance Trend by Month — All Plants</div>
+    <div id="ncTrendWrap">${ncTrendHtml()}</div>
+
     <div class="panel-title" style="margin-top:24px;">Line Performance — click a plant to expand (grouped by Line → Variant)</div>
     ${linePerfHtml}
   `;
 }
+/* ---------- Company Report: Non-Conformance monthly trend (view-only) ---------- */
+function setNcChartYear(y){ ncChartYear = y; const el=document.getElementById('ncTrendWrap'); if(el) el.innerHTML = ncTrendHtml(); }
+function setNcChartMetric(m){ ncChartMetric = m; const el=document.getElementById('ncTrendWrap'); if(el) el.innerHTML = ncTrendHtml(); }
+function ncTrendHtml(){
+  const MS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const years = [...new Set([...Object.keys(companyNcMonthly), ncChartYear])].filter(Boolean).sort().reverse();
+  const data = companyNcMonthly[ncChartYear] || Array.from({length:12},()=>({shifts:0,bags:0,kg:0,outKg:0}));
+  const metric = ncChartMetric;
+  const unit = metric==='bags' ? 'bags' : metric==='kg' ? 'kg' : '% of production';
+  // Months with no shifts logged stay blank (null) so an empty month never looks like an improvement.
+  const valOf = c => !c.shifts ? null : (metric==='bags' ? c.bags : metric==='kg' ? c.kg : (c.outKg>0 ? c.kg/c.outKg*100 : null));
+  const vals = data.map(valOf);
+  const fv = v => v==null ? '—' : (metric==='pct' ? v.toFixed(2)+'%' : fmt(v)+' '+metric);
+  const fShort = v => metric==='pct' ? v.toFixed(2) : fmt(v);
+
+  const controls = `<div class="month-picker" style="margin-bottom:10px;">
+      <span class="eyebrow">Year</span>
+      <select onchange="setNcChartYear(this.value)">${years.map(y=>`<option value="${esc(y)}" ${y===ncChartYear?'selected':''}>${esc(y)}</option>`).join('')}</select>
+      <span class="eyebrow" style="margin-left:8px;">Measure</span>
+      <button class="tab-btn ${metric==='kg'?'active':''}" onclick="setNcChartMetric('kg')">Kg</button>
+      <button class="tab-btn ${metric==='bags'?'active':''}" onclick="setNcChartMetric('bags')">Bags</button>
+      <button class="tab-btn ${metric==='pct'?'active':''}" onclick="setNcChartMetric('pct')">% of Production</button>
+    </div>
+    <div class="calc-note" style="margin-bottom:10px;">Total non-conformance logged across all plants, month by month (same totals as the table above). Lower is better. “% of Production” = kg affected ÷ total kg produced that month (all grades, including reject). Months with no shifts logged are left blank.</div>`;
+
+  const have = vals.map((v,i)=>v==null?null:i).filter(i=>i!=null);
+  if(!have.length) return controls + `<div class="no-data">No shifts logged for ${esc(ncChartYear||'this year')}.</div>`;
+
+  // Summary tiles
+  const sumKg = data.reduce((a,c)=>a+c.kg,0), sumBags = data.reduce((a,c)=>a+c.bags,0), sumOut = data.reduce((a,c)=>a+c.outKg,0);
+  const yearTotal = metric==='bags' ? sumBags : metric==='kg' ? sumKg : (sumOut>0 ? sumKg/sumOut*100 : 0);
+  const last = have[have.length-1], prev = have.length>1 ? have[have.length-2] : null;
+  let changeHtml = '<div class="value">—</div><div class="sub">Need two months of data</div>';
+  if(prev!=null){
+    const a = vals[last], b = vals[prev];
+    if(b>0){
+      const ch = (a-b)/b*100;
+      const better = ch<0, same = Math.abs(ch)<0.05;
+      changeHtml = `<div class="value" style="color:${same?'var(--text-dim)':better?'var(--good)':'var(--bad)'};">${same?'■':better?'▼':'▲'} ${Math.abs(ch).toFixed(1)}%</div><div class="sub">${same?'No change':better?'Improving':'Getting worse'} · ${MS[last]} vs ${MS[prev]}</div>`;
+    } else if(a>0){
+      changeHtml = `<div class="value" style="color:var(--bad);">▲ New</div><div class="sub">${MS[prev]} was 0 · ${MS[last]} vs ${MS[prev]}</div>`;
+    } else {
+      changeHtml = `<div class="value" style="color:var(--good);">■ 0</div><div class="sub">None in ${MS[prev]} or ${MS[last]}</div>`;
+    }
+  }
+  const bestI = have.reduce((m,i)=>vals[i]<vals[m]?i:m, have[0]);
+  const worstI = have.reduce((m,i)=>vals[i]>vals[m]?i:m, have[0]);
+  const tiles = `<div class="stat-grid" style="margin-bottom:12px;">
+      <div class="stat-card"><div class="label">${esc(ncChartYear)} Total</div><div class="value accent">${fv(yearTotal)}</div><div class="sub">${have.length} month${have.length>1?'s':''} with data</div></div>
+      <div class="stat-card"><div class="label">Latest Month (${MS[last]})</div><div class="value">${fv(vals[last])}</div></div>
+      <div class="stat-card"><div class="label">Latest vs Previous</div>${changeHtml}</div>
+      <div class="stat-card"><div class="label">Best / Worst Month</div><div class="value" style="font-size:16px;"><span style="color:var(--good);">${MS[bestI]}</span> / <span style="color:var(--bad);">${MS[worstI]}</span></div><div class="sub">${fv(vals[bestI])} / ${fv(vals[worstI])}</div></div>
+    </div>`;
+
+  // SVG line chart
+  const W=760, H=300, L=62, R=22, T=24, B=36;
+  const x = i => L + i*(W-L-R)/11;
+  const mx = Math.max(...vals.filter(v=>v!=null), 0);
+  let top = mx>0 ? mx : 1;
+  const mag = Math.pow(10, Math.floor(Math.log10(top))), norm = top/mag;
+  top = (norm<=1?1:norm<=2?2:norm<=2.5?2.5:norm<=5?5:10)*mag;
+  const y = v => T + (H-T-B)*(1 - v/top);
+  const tickFmt = v => metric==='pct' ? v.toFixed(v<1?2:1)+'%' : fmt(v, Number.isInteger(v)?0:1);
+  let grid = '';
+  for(let k=0;k<=4;k++){
+    const tv = top/4*k, ty = y(tv);
+    grid += `<line x1="${L}" y1="${ty}" x2="${W-R}" y2="${ty}" style="stroke:var(--line-soft);stroke-width:1;"/><text x="${L-8}" y="${ty+3}" text-anchor="end" style="fill:var(--text-dim2);font-size:10px;font-family:'JetBrains Mono';">${tickFmt(tv)}</text>`;
+  }
+  const xl = MS.map((m,i)=>`<text x="${x(i)}" y="${H-12}" text-anchor="middle" style="fill:var(--text-dim);font-size:10px;font-family:'JetBrains Mono';">${m}</text>`).join('');
+  let path = '', started = false;
+  vals.forEach((v,i)=>{ if(v==null){ started=false; return; } path += `${started?'L':'M'} ${x(i).toFixed(1)} ${y(v).toFixed(1)} `; started=true; });
+  const dots = vals.map((v,i)=> v==null ? '' :
+    `<circle cx="${x(i)}" cy="${y(v)}" r="4.5" style="fill:var(--amber);stroke:#1B1D21;stroke-width:1.5;"><title>${MS[i]} ${esc(ncChartYear)}: ${fv(v)}</title></circle>
+     <text x="${x(i)}" y="${y(v)-10}" text-anchor="middle" style="fill:var(--text);font-size:9.5px;font-family:'JetBrains Mono';">${fShort(v)}</text>`).join('');
+  const svg = `<div style="overflow-x:auto;"><svg viewBox="0 0 ${W} ${H}" style="width:100%;min-width:560px;height:auto;display:block;background:var(--panel-3);border:1px solid var(--line);border-radius:var(--radius);">
+      ${grid}${xl}
+      <path d="${path}" style="fill:none;stroke:var(--amber);stroke-width:2.5;stroke-linejoin:round;stroke-linecap:round;"/>
+      ${dots}
+    </svg></div>`;
+  return controls + tiles + svg;
+}
+
+/* ---------- Company Report: Plant Summary dashboard (view-only) ---------- */
+function setPlantSummary(id){ psSelected = id; const el=document.getElementById('plantSummaryDash'); if(el) el.innerHTML = plantDashHtml(); }
+function plantDashHtml(){
+  const pds = companyPlantData;
+  if(!pds.length) return `<div class="no-data">No plants configured.</div>`;
+  const tile = (label,value,sub,extra)=>`<div class="stat-card"><div class="label">${label}</div><div class="value ${extra||''}" style="font-size:19px;">${value}</div>${sub?`<div class="sub">${sub}</div>`:''}</div>`;
+  const tilesFor = (fb,fk,rk,shifts,oee)=>{
+    const oc = oeeClass(oee);
+    const rejPct = (fk+rk)>0 ? (rk/(fk+rk)*100).toFixed(1)+'% of output' : '';
+    return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:12px;">
+      ${tile('Finished Product (bags)',fmt(fb),'','accent')}
+      ${tile('Finished Product (kg)',fmt(fk),'','accent')}
+      ${tile('Reject (kg)',fmt(rk),rejPct)}
+      ${tile('Shifts',fmt(shifts),'')}
+      ${tile('Avg OEE', shifts?`<span class="badge ${oc.cls}" style="font-size:15px;">${oee.toFixed(1)}%</span>`:'<span class="badge badge-dim">No data</span>', shifts?oc.label:'')}
+    </div>`;
+  };
+  const causeChips = list => list.length ? list.map(([c,n])=>`<span class="badge badge-dim" style="display:inline-block;white-space:normal;margin:0 4px 3px 0;">${esc(c)} · ${n}</span>`).join('') : '<span style="color:var(--text-dim2);">—</span>';
+  const tableFor = pd => {
+    if(!pd.lineGroups.length) return `<div class="no-data">No shift data logged this period.</div>`;
+    let rows = '';
+    pd.lineGroups.forEach(lg=>{
+      const lb = lg.variantRows.reduce((a,v)=>a+v.finishedProductBags,0);
+      const lk = lg.variantRows.reduce((a,v)=>a+v.finishedProductKg,0);
+      const lr = lg.variantRows.reduce((a,v)=>a+v.rejectKg,0);
+      const merged = {};
+      lg.variantRows.forEach(v=>Object.entries(v.causeCounts||{}).forEach(([c,n])=>{ merged[c]=(merged[c]||0)+n; }));
+      const lTop = Object.entries(merged).sort((a,b)=>b[1]-a[1]).slice(0,5);
+      rows += `<tr style="background:var(--panel-2);font-weight:600;"><td style="color:var(--amber);">${esc(lg.line.name)} <span style="color:var(--text-dim2);font-weight:400;">— ${esc(lg.line.type)}</span></td><td class="num">${fmt(lb)}</td><td class="num">${fmt(lk)}</td><td class="num">${fmt(lr)}</td><td>${causeChips(lTop)}</td></tr>`;
+      lg.variantRows.forEach(vr=>{
+        rows += `<tr><td style="padding-left:26px;">${vr.variant?esc(vr.variant.name):'—'}</td><td class="num">${fmt(vr.finishedProductBags)}</td><td class="num">${fmt(vr.finishedProductKg)}</td><td class="num">${fmt(vr.rejectKg)}</td><td>${causeChips(vr.topCauses)}</td></tr>`;
+      });
+    });
+    return `<table><thead><tr><th>Line / Variant</th><th class="num">Finished Product (bags)</th><th class="num">Finished Product (kg)</th><th class="num">Reject (kg)</th><th>Top Root Causes (occurrences)</th></tr></thead><tbody>${rows}</tbody></table>`;
+  };
+  const sel = psSelected;
+  const tabs = `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;">
+    <button class="tab-btn ${sel==='all'?'active':''}" data-id="all" onclick="setPlantSummary(this.dataset.id)">All Plants</button>
+    ${pds.map(pd=>`<button class="tab-btn ${sel===pd.plant.id?'active':''}" data-id="${esc(pd.plant.id)}" onclick="setPlantSummary(this.dataset.id)">${esc(pd.plant.name)}</button>`).join('')}
+  </div>`;
+
+  if(sel!=='all'){
+    const pd = pds.find(p=>p.plant.id===sel) || pds[0];
+    return tabs + tilesFor(pd.totalFinishedProductBags, pd.totalFinishedProductKg, pd.totalRejectKg, pd.shiftCount, pd.avgOee) + tableFor(pd);
+  }
+  // All plants at once: company totals, then every plant stacked
+  const tb = pds.reduce((a,p)=>a+p.totalFinishedProductBags,0), tk = pds.reduce((a,p)=>a+p.totalFinishedProductKg,0), tr = pds.reduce((a,p)=>a+p.totalRejectKg,0);
+  const ts = pds.reduce((a,p)=>a+p.shiftCount,0);
+  const tOee = ts>0 ? pds.reduce((a,p)=>a+p.avgOee*p.shiftCount,0)/ts : 0;
+  return tabs + `<div class="eyebrow" style="margin-bottom:8px;">All plants combined</div>` + tilesFor(tb,tk,tr,ts,tOee) +
+    pds.map(pd=>{
+      const oc = oeeClass(pd.avgOee);
+      return `<div class="sub-block" style="margin-top:14px;">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;font-family:'JetBrains Mono';font-size:13px;">
+          <strong>${esc(pd.plant.name)}</strong>
+          ${pd.shiftCount?`<span class="badge ${oc.cls}">${pd.avgOee.toFixed(1)}% OEE</span>`:'<span class="badge badge-dim">No data</span>'}
+          <span style="color:var(--text-dim2);font-size:11px;">${fmt(pd.totalFinishedProductBags)} bags · ${fmt(pd.totalFinishedProductKg)} kg finished · ${fmt(pd.totalRejectKg)} kg reject · ${pd.shiftCount} shifts</span>
+        </div>
+        ${tableFor(pd)}
+      </div>`;
+    }).join('');
+}
+// Printing should include every plant, not only the selected tab
+window.addEventListener('beforeprint',()=>{ if(document.getElementById('plantSummaryDash') && psSelected!=='all'){ _psPrev=psSelected; psSelected='all'; setPlantSummary('all'); } });
+window.addEventListener('afterprint',()=>{ if(_psPrev!=null && document.getElementById('plantSummaryDash')){ const p=_psPrev; _psPrev=null; setPlantSummary(p); } });
+
 async function createUserAccount(){
   const email = document.getElementById('u_email').value.trim();
   const password = document.getElementById('u_password').value;
